@@ -7,6 +7,7 @@ import { Card, CardContent, CardTitle, CardDescription } from "@/components/ui/c
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { ThemeToggle } from "@/components/common/theme-toggle";
+import { Sidebar } from "@/components/common/sidebar";
 import { useAccentTheme, AccentTheme } from "@/components/common/theme-context";
 import { signout } from "@/app/auth/actions";
 import { sileo } from "sileo";
@@ -14,6 +15,7 @@ import { IncomeFrequencySelect, SubscriptionFrequencySelect } from "@/components
 import {
   addIncome,
   deleteIncome,
+  editIncome,
   addPayment,
   togglePaymentStatus,
   deletePayment,
@@ -48,10 +50,14 @@ interface DashboardClientProps {
   subscriptions: any[];
   isPro: boolean;
   currency: string;
-  totalIncome: number;
-  totalPayments: number;
-  totalSubscriptions: number;
-  netBalance: number;
+  totalIncome: number; // Real monthly income
+  totalIncomeBase: number; // Projected base income
+  totalPayments: number; // Real manual payments this month
+  totalSubscriptions: number; // Base subscriptions
+  netBalance: number; // Balance Libre Neto (Projected)
+  balanceReal: number; // Balance Real (Actual paid all time)
+  totalExpensesSinceLastIncome: number; // Real expenses since last payday
+  lastIncomeDateText: string;
   errorMsg?: string;
   upgradeMsg?: string;
 }
@@ -64,15 +70,22 @@ export function DashboardClient({
   isPro,
   currency,
   totalIncome,
+  totalIncomeBase = 0,
   totalPayments,
   totalSubscriptions,
   netBalance,
+  balanceReal = 0,
+  totalExpensesSinceLastIncome = 0,
+  lastIncomeDateText = "sin ingresos",
   errorMsg,
   upgradeMsg,
 }: DashboardClientProps) {
   const { accentTheme, setAccentTheme } = useAccentTheme();
   const [activeModal, setActiveModal] = React.useState<"income" | "payment" | "subscription" | null>(null);
   const [editingSubscription, setEditingSubscription] = React.useState<any | null>(null);
+  const [editingIncome, setEditingIncome] = React.useState<any | null>(null);
+  const [isIncomeRecurring, setIsIncomeRecurring] = React.useState(false);
+  const [isExpenseRecurring, setIsExpenseRecurring] = React.useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
 
@@ -81,6 +94,63 @@ export function DashboardClient({
     type: "income" | "payment" | "subscription";
     action: () => Promise<void>;
   } | null>(null);
+
+  const [incomeFrequency, setIncomeFrequency] = React.useState<string>("monthly");
+  const [expenseFrequency, setExpenseFrequency] = React.useState<string>("monthly");
+  const [incomeDay, setIncomeDay] = React.useState<string>("");
+  const [expenseDay, setExpenseDay] = React.useState<string>("");
+
+  React.useEffect(() => {
+    if (editingIncome) {
+      setIncomeFrequency(editingIncome.frequency || "monthly");
+      if (editingIncome.next_pay_date) {
+        const d = new Date(editingIncome.next_pay_date);
+        const day = d.getUTCDate();
+        const baseDay = editingIncome.frequency === "bi-weekly" ? (day > 15 ? day - 15 : day) : day;
+        setIncomeDay(String(baseDay));
+      } else {
+        setIncomeDay(String(new Date().getUTCDate()));
+      }
+    } else {
+      setIncomeFrequency("monthly");
+      setIncomeDay(String(new Date().getUTCDate()));
+    }
+  }, [editingIncome]);
+
+  React.useEffect(() => {
+    if (editingSubscription) {
+      setExpenseFrequency(editingSubscription.billing_cycle || "monthly");
+      if (editingSubscription.next_payment_date) {
+        const d = new Date(editingSubscription.next_payment_date);
+        const day = d.getUTCDate();
+        const baseDay = editingSubscription.billing_cycle === "bi-weekly" ? (day > 15 ? day - 15 : day) : day;
+        setExpenseDay(String(baseDay));
+      } else {
+        setExpenseDay(String(new Date().getUTCDate()));
+      }
+    } else {
+      setExpenseFrequency("monthly");
+      setExpenseDay(String(new Date().getUTCDate()));
+    }
+  }, [editingSubscription]);
+
+  React.useEffect(() => {
+    if (incomeFrequency === "bi-weekly") {
+      const parsed = parseInt(incomeDay);
+      if (!isNaN(parsed) && parsed > 15) {
+        setIncomeDay("15");
+      }
+    }
+  }, [incomeFrequency, incomeDay]);
+
+  React.useEffect(() => {
+    if (expenseFrequency === "bi-weekly") {
+      const parsed = parseInt(expenseDay);
+      if (!isNaN(parsed) && parsed > 15) {
+        setExpenseDay("15");
+      }
+    }
+  }, [expenseFrequency, expenseDay]);
 
   const [localError, setLocalError] = React.useState<string | null>(null);
   const [localSuccess, setLocalSuccess] = React.useState<string | null>(null);
@@ -161,12 +231,14 @@ export function DashboardClient({
   let paymentsPct = 0;
   let subscriptionsPct = 0;
 
-  if (totalIncome > 0) {
-    if (totalIncome >= totalExpenses) {
-      const net = totalIncome - totalExpenses;
-      savingsPct = (net / totalIncome) * 100;
-      paymentsPct = (totalPayments / totalIncome) * 100;
-      subscriptionsPct = (totalSubscriptions / totalIncome) * 100;
+  const incomeForChart = totalIncomeBase > 0 ? totalIncomeBase : totalIncome;
+
+  if (incomeForChart > 0) {
+    if (incomeForChart >= totalExpenses) {
+      const net = incomeForChart - totalExpenses;
+      savingsPct = (net / incomeForChart) * 100;
+      paymentsPct = (totalPayments / incomeForChart) * 100;
+      subscriptionsPct = (totalSubscriptions / incomeForChart) * 100;
     } else {
       const totalOut = totalPayments + totalSubscriptions;
       paymentsPct = (totalPayments / totalOut) * 100;
@@ -192,38 +264,41 @@ export function DashboardClient({
     { name: "Suscripciones", percentage: subscriptionsPct, color: "var(--accent-soft-fg)", opacity: 0.4 },
   ].filter((s) => s.percentage > 0);
 
-  // Combine income + payments + subscriptions into chronological log
-  const transactionsLog = [
-    ...(incomes || []).map((inc) => ({
-      id: inc.id,
-      title: inc.source,
-      type: "income" as const,
-      amount: Number(inc.amount),
-      date: new Date(inc.created_at || Date.now()),
-      displayDate: inc.date || "Hoy",
-      action: deleteIncome.bind(null, inc.id),
-    })),
-    ...(payments || []).map((pay) => ({
-      id: pay.id,
-      title: pay.title,
-      type: "payment" as const,
-      amount: -Number(pay.amount),
-      date: new Date(pay.created_at || Date.now()),
-      displayDate: pay.category || "Servicio",
-      status: pay.status,
-      action: deletePayment.bind(null, pay.id),
-    })),
-    ...(subscriptions || []).map((sub) => ({
-      id: sub.id,
-      title: sub.name,
-      type: "subscription" as const,
-      amount: -Number(sub.amount),
-      date: new Date(sub.created_at || Date.now()),
-      displayDate: "Suscripción",
-      action: deleteSubscription.bind(null, sub.id),
-      raw: sub,
-    })),
-  ].sort((a, b) => b.date.getTime() - a.date.getTime());
+  // Compile all transactions into a unified log from payments (which contains the transactions ledger)
+  const transactionsLog = (payments || []).map((tx) => {
+    let type: "income" | "payment" | "subscription" = "payment";
+    let displayDate = tx.category || "Gasto";
+    let action = deletePayment.bind(null, tx.id);
+
+    if (tx.amount > 0) {
+      type = "income";
+      displayDate = tx.source_type === "income_recurring" ? "Ingreso recurrente" : "Ingreso";
+    } else if (tx.source_type === "subscription_recurring") {
+      type = "subscription";
+      displayDate = "Suscripción";
+    } else {
+      type = "payment";
+      displayDate = tx.category || "Servicio";
+    }
+
+    const rawTemplate = tx.source_type === "subscription_recurring"
+      ? (subscriptions || []).find((s) => s.id === tx.source_id)
+      : tx.source_type === "income_recurring"
+      ? (incomes || []).find((i) => i.id === tx.source_id)
+      : null;
+
+    return {
+      id: tx.id,
+      title: tx.title,
+      type,
+      amount: Number(tx.amount), // positive for income, negative for expenses/subscriptions
+      date: new Date(tx.date || tx.created_at || Date.now()),
+      displayDate,
+      status: tx.status,
+      action,
+      raw: rawTemplate, // for editing/viewing template if needed
+    };
+  }).sort((a, b) => b.date.getTime() - a.date.getTime());
 
   const translateFrequency = (freq: string) => {
     switch (freq) {
@@ -250,8 +325,8 @@ export function DashboardClient({
       .map((pay) => ({
         id: pay.id,
         name: pay.title,
-        amount: Number(pay.amount),
-        date: new Date(pay.due_date || Date.now()),
+        amount: Math.abs(Number(pay.amount)),
+        date: new Date(pay.date || Date.now()),
         type: "payment" as const,
         displayFreq: "manual",
       })),
@@ -276,6 +351,15 @@ export function DashboardClient({
       return "mañana";
     }
     return `${diffDays} días rest.`;
+  };
+
+  const formatDate = (dateInput: Date | string) => {
+    const d = new Date(dateInput);
+    return d.toLocaleDateString("es-ES", {
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+    });
   };
 
   // Themes list
@@ -307,80 +391,9 @@ export function DashboardClient({
   };
 
   return (
-    <div className="min-h-screen bg-background text-foreground flex flex-col lg:flex-row font-sans">
+    <div className="h-screen overflow-hidden bg-background text-foreground flex flex-col lg:flex-row font-sans">
       {/* 1. LEFT SIDEBAR NAVIGATION (Desktop) */}
-      <aside className="w-64 border-r border-premium bg-card flex flex-col justify-between hidden lg:flex shrink-0">
-        <div className="p-8 space-y-8">
-          <div className="flex items-center space-x-3">
-            <span className="font-heading-style text-2xl font-black tracking-tighter">
-              zetsu<span className="text-accent-soft-fg font-serif">.</span>
-            </span>
-            <span className="text-[10px] font-mono px-2 py-0.5 border border-accent-soft-border rounded-full bg-accent-soft-bg text-accent-soft-fg uppercase font-bold tracking-wider">
-              {profile.billing_tier}
-            </span>
-          </div>
-
-          <nav className="space-y-2">
-            <Link
-              href="/dashboard"
-              className="flex items-center space-x-3 px-4 py-3 rounded-xl bg-accent-soft-bg text-accent-soft-fg border border-accent-soft-border text-sm font-medium transition-all duration-200"
-            >
-              <IconHome className="size-4" />
-              <span className="font-mono uppercase tracking-wider text-xs">dashboard</span>
-            </Link>
-
-            <div className="flex items-center justify-between px-4 py-3 rounded-xl border border-transparent text-sm text-muted-foreground cursor-not-allowed hover:bg-muted/10 transition-all duration-200">
-              <span className="flex items-center space-x-3">
-                <IconReceipt className="size-4" />
-                <span className="font-mono uppercase tracking-wider text-xs">transacciones</span>
-              </span>
-              <IconLock className="size-3 text-muted-foreground/60" />
-            </div>
-
-            <div className="flex items-center justify-between px-4 py-3 rounded-xl border border-transparent text-sm text-muted-foreground cursor-not-allowed hover:bg-muted/10 transition-all duration-200">
-              <span className="flex items-center space-x-3">
-                <IconChartBar className="size-4" />
-                <span className="font-mono uppercase tracking-wider text-xs">proyecciones</span>
-              </span>
-              <IconLock className="size-3 text-muted-foreground/60" />
-            </div>
-
-            <div className="flex items-center justify-between px-4 py-3 rounded-xl border border-transparent text-sm text-muted-foreground cursor-not-allowed hover:bg-muted/10 transition-all duration-200">
-              <span className="flex items-center space-x-3">
-                <IconSettings className="size-4" />
-                <span className="font-mono uppercase tracking-wider text-xs">ajustes</span>
-              </span>
-              <IconLock className="size-3 text-muted-foreground/60" />
-            </div>
-          </nav>
-        </div>
-
-        {/* User Card at bottom */}
-        <div className="p-6 border-t border-premium space-y-4">
-          <div className="flex items-center space-x-3">
-            <div className="size-9 rounded-full bg-accent-soft-bg border border-accent-soft-border text-accent-soft-fg flex items-center justify-center font-bold font-mono text-sm uppercase">
-              {profile.full_name ? profile.full_name.substring(0, 2) : "US"}
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="text-xs font-mono font-bold truncate text-foreground">
-                {profile.full_name.toLowerCase()}
-              </p>
-              <p className="text-[10px] text-muted-foreground font-mono">
-                divisa: {currency}
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center justify-between pt-2">
-            <ThemeToggle />
-            <form action={signout}>
-              <Button size="xs" variant="outline" className="gap-1.5 font-mono text-[10px] uppercase">
-                <IconLogout className="size-3" /> salir
-              </Button>
-            </form>
-          </div>
-        </div>
-      </aside>
+      <Sidebar activeTab="dashboard" profile={profile} currency={currency} />
 
       {/* 2. MOBILE HEADER & NAVIGATION */}
       <header className="lg:hidden border-b border-premium bg-card px-6 py-4 flex items-center justify-between sticky top-0 z-40">
@@ -425,13 +438,23 @@ export function DashboardClient({
               <span className="font-mono uppercase tracking-wider text-xs">dashboard</span>
             </Link>
 
-            <div className="flex items-center justify-between px-4 py-3 rounded-xl text-muted-foreground opacity-60">
-              <span className="flex items-center space-x-3">
-                <IconReceipt className="size-4" />
-                <span className="font-mono uppercase tracking-wider text-xs">transacciones (pro)</span>
-              </span>
-              <IconLock className="size-3" />
-            </div>
+            <Link
+              href="/dashboard/transactions"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="flex items-center space-x-3 px-4 py-3 rounded-xl border border-transparent text-sm text-muted-foreground hover:bg-muted/10 transition-all duration-200"
+            >
+              <IconReceipt className="size-4" />
+              <span className="font-mono uppercase tracking-wider text-xs">transacciones</span>
+            </Link>
+
+            <Link
+              href="/dashboard/subscriptions"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="flex items-center space-x-3 px-4 py-3 rounded-xl border border-transparent text-sm text-muted-foreground hover:bg-muted/10 transition-all duration-200"
+            >
+              <IconCreditCard className="size-4" />
+              <span className="font-mono uppercase tracking-wider text-xs">suscripciones</span>
+            </Link>
 
             <div className="flex items-center justify-between px-4 py-3 rounded-xl text-muted-foreground opacity-60">
               <span className="flex items-center space-x-3">
@@ -440,6 +463,15 @@ export function DashboardClient({
               </span>
               <IconLock className="size-3" />
             </div>
+
+            <Link
+              href="/dashboard/settings"
+              onClick={() => setIsMobileMenuOpen(false)}
+              className="flex items-center space-x-3 px-4 py-3 rounded-xl border border-transparent text-sm text-muted-foreground hover:bg-muted/10 transition-all duration-200"
+            >
+              <IconSettings className="size-4" />
+              <span className="font-mono uppercase tracking-wider text-xs">ajustes</span>
+            </Link>
           </nav>
 
           <div className="border-t border-premium pt-6 flex items-center justify-between">
@@ -487,6 +519,11 @@ export function DashboardClient({
               <h1 className="font-heading-style text-3xl font-black tracking-tight text-foreground lowercase">
                 hola, {profile.full_name.split(" ")[0]}!
               </h1>
+              {profile.tagline && (
+                <p className="text-[10px] text-muted-foreground font-mono italic">
+                  “{profile.tagline}”
+                </p>
+              )}
             </div>
 
             {/* Primary Net Balance Card */}
@@ -501,8 +538,21 @@ export function DashboardClient({
                     {formatMoney(netBalance)}
                   </p>
                   <span className="text-[9px] font-mono text-muted-foreground block">
-                    disponible después de todos tus gastos y suscripciones del mes
+                    proyección mensual basada en tus ingresos y suscripciones base
                   </span>
+
+                  {/* Balance Real (Based on completed transactions) */}
+                  <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2.5 pt-2 border-t border-dashed border-accent-soft-border/30">
+                    <span className="text-[9px] uppercase font-mono text-accent-soft-fg/75 font-bold tracking-wider">
+                      balance real:
+                    </span>
+                    <span className="text-sm font-mono font-bold text-foreground">
+                      {formatMoney(balanceReal)}
+                    </span>
+                    <span className="text-[9px] text-muted-foreground font-mono">
+                      • según transacciones efectivamente liquidadas (pagadas)
+                    </span>
+                  </div>
                 </div>
 
                 {/* Separador */}
@@ -512,26 +562,34 @@ export function DashboardClient({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div className="space-y-1">
                     <span className="text-[10px] uppercase font-mono text-accent-soft-fg font-bold tracking-wider block">
-                      ingresos mensuales
+                      ingresos netos (base)
                     </span>
                     <p className="text-xl md:text-2xl font-mono font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
-                      {formatMoney(totalIncome)}
+                      {formatMoney(totalIncomeBase)}
                     </p>
-                    <span className="text-[9px] font-mono text-muted-foreground block">
-                      {incomes?.length || 0} fuentes activas
-                    </span>
+                    <div className="text-[9px] font-mono text-muted-foreground block space-y-0.5">
+                      <p>{incomes?.length || 0} fuentes activas</p>
+                      <p className="text-[8px] text-emerald-600 dark:text-emerald-400">
+                        ingresos reales este mes: {formatMoney(totalIncome)}
+                      </p>
+                    </div>
                   </div>
 
                   <div className="space-y-1 sm:border-l sm:border-dashed sm:border-accent-soft-border/50 sm:pl-6">
                     <span className="text-[10px] uppercase font-mono text-accent-soft-fg font-bold tracking-wider block">
-                      egresos totales
+                      egresos netos (base)
                     </span>
                     <p className="text-xl md:text-2xl font-mono font-bold tracking-tight text-destructive">
-                      -{formatMoney(totalExpenses)}
+                      -{formatMoney(totalSubscriptions + totalPayments)}
                     </p>
-                    <span className="text-[9px] font-mono text-muted-foreground block">
-                      gastos manuales + suscripciones
-                    </span>
+                    <div className="text-[9px] font-mono text-muted-foreground block space-y-0.5">
+                      <p>suscripciones base + pagos manuales</p>
+                      <p className="text-[8px] text-destructive">
+                        {lastIncomeDateText !== "sin ingresos"
+                          ? `egresos reales (desde ${formatDate(lastIncomeDateText)}): -${formatMoney(totalExpensesSinceLastIncome)}`
+                          : `egresos reales este mes: -${formatMoney(totalExpensesSinceLastIncome)}`}
+                      </p>
+                    </div>
                   </div>
                 </div>
               </CardContent>
@@ -649,7 +707,7 @@ export function DashboardClient({
                             {formatMoney(Math.abs(tx.amount))}
                           </span>
 
-                          {tx.type === "payment" && (
+                          {(tx.type === "payment" || tx.type === "subscription") && (
                             <button
                               type="button"
                               onClick={() => {
@@ -669,7 +727,7 @@ export function DashboardClient({
                                   }
                                 });
                               }}
-                              className={`text-[9px] font-mono px-2 py-0.5 border ${
+                              className={`text-[9px] font-mono px-2 py-0.5 border cursor-pointer ${
                                 tx.status === "paid"
                                   ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/5 font-bold"
                                   : "border-border text-muted-foreground"
@@ -685,7 +743,23 @@ export function DashboardClient({
                               type="button"
                               onClick={() => {
                                 setEditingSubscription(tx.raw);
-                                setActiveModal("subscription");
+                                setIsExpenseRecurring(true);
+                                setActiveModal("payment");
+                              }}
+                              className="text-muted-foreground hover:text-accent-soft-fg p-1 transition-colors"
+                              aria-label="Editar"
+                            >
+                              <IconPencil className="size-3.5" />
+                            </button>
+                          )}
+
+                          {tx.type === "income" && tx.raw && (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setEditingIncome(tx.raw);
+                                setIsIncomeRecurring(true);
+                                setActiveModal("income");
                               }}
                               className="text-muted-foreground hover:text-accent-soft-fg p-1 transition-colors"
                               aria-label="Editar"
@@ -780,7 +854,10 @@ export function DashboardClient({
 
               <div className="grid grid-cols-3 gap-3">
                 <button
-                  onClick={() => setActiveModal("income")}
+                  onClick={() => {
+                    setEditingIncome(null);
+                    setActiveModal("income");
+                  }}
                   className="flex flex-col items-center justify-center p-4 border border-premium bg-card hover:bg-accent-soft-bg hover:border-accent-soft-border text-muted-foreground hover:text-accent-soft-fg rounded-2xl transition-all duration-200 group text-center cursor-pointer"
                 >
                   <IconCoin className="size-5 mb-2 group-hover:scale-110 transition-transform" />
@@ -788,7 +865,11 @@ export function DashboardClient({
                 </button>
 
                 <button
-                  onClick={() => setActiveModal("payment")}
+                  onClick={() => {
+                    setEditingSubscription(null);
+                    setIsExpenseRecurring(false);
+                    setActiveModal("payment");
+                  }}
                   className="flex flex-col items-center justify-center p-4 border border-premium bg-card hover:bg-accent-soft-bg hover:border-accent-soft-border text-muted-foreground hover:text-accent-soft-fg rounded-2xl transition-all duration-200 group text-center cursor-pointer"
                 >
                   <IconCreditCard className="size-5 mb-2 group-hover:scale-110 transition-transform" />
@@ -799,7 +880,8 @@ export function DashboardClient({
                   onClick={() => {
                     if (isPro) {
                       setEditingSubscription(null);
-                      setActiveModal("subscription");
+                      setIsExpenseRecurring(true);
+                      setActiveModal("payment");
                     } else {
                       // Pro Upgrade simulation trigger
                       window.location.href = "/api/checkout/stripe?simulated=true";
@@ -893,7 +975,7 @@ export function DashboardClient({
           <Card className="max-w-md w-full bg-card border border-premium shadow-premium-lg relative animate-scale-up">
             <div className="flex justify-between items-center mb-6">
               <h3 className="font-heading-style text-lg font-bold tracking-tight text-foreground lowercase">
-                /{activeModal === "income" ? "registrar_ingreso" : activeModal === "payment" ? "registrar_pago" : editingSubscription ? "editar_suscripcion" : "registrar_suscripcion"}
+                /{activeModal === "income" ? (editingIncome ? "editar_ingreso" : "registrar_ingreso") : activeModal === "payment" ? "registrar_pago" : editingSubscription ? "editar_suscripcion" : "registrar_suscripcion"}
               </h3>
               <Button
                 size="icon-sm"
@@ -907,23 +989,117 @@ export function DashboardClient({
 
             {activeModal === "income" && (
               <form
-                action={(fd) => handleAction(addIncome, fd, "Ingreso registrado con éxito")}
+                key={editingIncome ? `edit-${editingIncome.id}` : "new"}
+                action={(fd) => handleAction(
+                  editingIncome ? editIncome : addIncome,
+                  fd,
+                  editingIncome ? "Ingreso actualizado con éxito" : "Ingreso registrado con éxito"
+                )}
                 className="space-y-4 font-mono text-xs"
               >
+                {editingIncome && (
+                  <input type="hidden" name="id" value={editingIncome.id} />
+                )}
                 <div className="space-y-1">
                   <Label htmlFor="modal-source" className="text-[10px] font-bold uppercase">Fuente de Ingreso</Label>
-                  <Input id="modal-source" name="source" placeholder="Nómina Mensual" required />
+                  <Input
+                    id="modal-source"
+                    name="source"
+                    placeholder="Nómina Mensual"
+                    defaultValue={editingIncome?.source || ""}
+                    required
+                  />
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="modal-income-amount" className="text-[10px] font-bold uppercase">Monto ({currency})</Label>
-                    <Input id="modal-income-amount" name="amount" type="number" step="0.01" placeholder="2500" required />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="modal-income-freq" className="text-[10px] font-bold uppercase">Frecuencia</Label>
-                    <IncomeFrequencySelect id="modal-income-freq" name="frequency" defaultValue="monthly" />
-                  </div>
+                <div className="space-y-1">
+                  <Label htmlFor="modal-income-amount" className="text-[10px] font-bold uppercase">Monto ({currency})</Label>
+                  <Input
+                    id="modal-income-amount"
+                    name="amount"
+                    type="number"
+                    step="0.01"
+                    placeholder="2500"
+                    defaultValue={editingIncome?.amount || ""}
+                    required
+                  />
                 </div>
+
+                {/* Toggle Recurrente */}
+                <div className="flex items-center justify-between p-3 bg-muted/20 border border-border rounded-xl">
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] font-bold uppercase block">¿Es recurrente?</span>
+                    <span className="text-[9px] text-muted-foreground font-mono">
+                      {isIncomeRecurring ? "Se recibe periódicamente" : "Ingreso de una sola vez"}
+                    </span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setIsIncomeRecurring(!isIncomeRecurring)}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      isIncomeRecurring ? "bg-accent-soft-fg" : "bg-muted"
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block size-4 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out ${
+                        isIncomeRecurring ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                  <input type="hidden" name="is_recurring" value={isIncomeRecurring ? "true" : "false"} />
+                </div>
+
+                {isIncomeRecurring ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="modal-income-freq" className="text-[10px] font-bold uppercase">Frecuencia</Label>
+                      <IncomeFrequencySelect
+                        id="modal-income-freq"
+                        name="frequency"
+                        value={incomeFrequency}
+                        onChange={(e) => setIncomeFrequency(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="modal-income-day" className="text-[10px] font-bold uppercase">Día del Mes</Label>
+                      <Input
+                        id="modal-income-day"
+                        name="day_of_month"
+                        type="number"
+                        min="1"
+                        max={incomeFrequency === "bi-weekly" ? "15" : "31"}
+                        placeholder="15"
+                        value={incomeDay}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const parsed = parseInt(val);
+                          const maxVal = incomeFrequency === "bi-weekly" ? 15 : 31;
+                          if (val === "") {
+                            setIncomeDay("");
+                          } else if (!isNaN(parsed)) {
+                            setIncomeDay(String(Math.max(1, Math.min(maxVal, parsed))));
+                          }
+                        }}
+                        required
+                      />
+                    </div>
+                    {incomeFrequency === "bi-weekly" && (
+                      <p className="col-span-2 text-[10px] text-accent-soft-fg font-mono mt-1 leading-relaxed">
+                        💡 Los ingresos se realizarán los días {parseInt(incomeDay) || 1} y {(parseInt(incomeDay) || 1) + 15} de cada mes.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <Label htmlFor="modal-income-date" className="text-[10px] font-bold uppercase">Fecha de Ingreso</Label>
+                    <Input
+                      id="modal-income-date"
+                      name="next_pay_date"
+                      type="date"
+                      defaultValue={new Date().toISOString().split("T")[0]}
+                      required
+                    />
+                  </div>
+                )}
+
                 <div className="pt-2 flex space-x-2">
                   <Button
                     type="button"
@@ -940,8 +1116,14 @@ export function DashboardClient({
                     className="flex-1 justify-center py-2 gap-1.5"
                     disabled={isPending}
                   >
-                    {isPending ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconPlus className="size-3.5" />}
-                    agregar
+                    {isPending ? (
+                      <IconLoader2 className="size-3.5 animate-spin" />
+                    ) : editingIncome ? (
+                      <IconPencil className="size-3.5" />
+                    ) : (
+                      <IconPlus className="size-3.5" />
+                    )}
+                    {editingIncome ? "guardar" : "agregar"}
                   </Button>
                 </div>
               </form>
@@ -949,53 +1131,11 @@ export function DashboardClient({
 
             {activeModal === "payment" && (
               <form
-                action={(fd) => handleAction(addPayment, fd, "Pago registrado con éxito")}
-                className="space-y-4 font-mono text-xs"
-              >
-                <div className="space-y-1">
-                  <Label htmlFor="modal-title" className="text-[10px] font-bold uppercase">Título del Gasto</Label>
-                  <Input id="modal-title" name="title" placeholder="Internet Fibra" required />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="modal-pay-amount" className="text-[10px] font-bold uppercase">Monto ({currency})</Label>
-                    <Input id="modal-pay-amount" name="amount" type="number" step="0.01" placeholder="45" required />
-                  </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="modal-category" className="text-[10px] font-bold uppercase">Categoría</Label>
-                    <Input id="modal-category" name="category" placeholder="servicios" defaultValue="servicios" />
-                  </div>
-                </div>
-                <div className="pt-2 flex space-x-2">
-                  <Button
-                    type="button"
-                    variant="outline"
-                    className="flex-1 justify-center py-2"
-                    onClick={() => setActiveModal(null)}
-                    disabled={isPending}
-                  >
-                    cancelar
-                  </Button>
-                  <Button
-                    type="submit"
-                    variant="soft"
-                    className="flex-1 justify-center py-2 gap-1.5"
-                    disabled={isPending}
-                  >
-                    {isPending ? <IconLoader2 className="size-3.5 animate-spin" /> : <IconPlus className="size-3.5" />}
-                    agregar
-                  </Button>
-                </div>
-              </form>
-            )}
-
-            {activeModal === "subscription" && (
-              <form
                 key={editingSubscription ? `edit-${editingSubscription.id}` : "new"}
                 action={(fd) => handleAction(
-                  editingSubscription ? editSubscription : addSubscription,
+                  editingSubscription ? editSubscription : addPayment,
                   fd,
-                  editingSubscription ? "Suscripción actualizada con éxito" : "Suscripción registrada con éxito"
+                  editingSubscription ? "Gasto actualizado con éxito" : "Gasto registrado con éxito"
                 )}
                 className="space-y-4 font-mono text-xs"
               >
@@ -1003,62 +1143,123 @@ export function DashboardClient({
                   <input type="hidden" name="id" value={editingSubscription.id} />
                 )}
                 <div className="space-y-1">
-                  <Label htmlFor="modal-sub-name" className="text-[10px] font-bold uppercase">Nombre del Servicio</Label>
+                  <Label htmlFor="modal-title" className="text-[10px] font-bold uppercase">Concepto del Gasto</Label>
                   <Input
-                    id="modal-sub-name"
-                    name="name"
-                    placeholder="Spotify Premium"
+                    id="modal-title"
+                    name={editingSubscription ? "name" : "title"}
+                    placeholder="Internet Fibra"
                     defaultValue={editingSubscription?.name || ""}
                     required
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="space-y-1">
-                    <Label htmlFor="modal-sub-amount" className="text-[10px] font-bold uppercase">Monto ({currency})</Label>
+                    <Label htmlFor="modal-pay-amount" className="text-[10px] font-bold uppercase">Monto ({currency})</Label>
                     <Input
-                      id="modal-sub-amount"
+                      id="modal-pay-amount"
                       name="amount"
                       type="number"
                       step="0.01"
-                      placeholder="10.99"
+                      placeholder="45"
                       defaultValue={editingSubscription?.amount || ""}
                       required
                     />
                   </div>
                   <div className="space-y-1">
-                    <Label htmlFor="modal-sub-category" className="text-[10px] font-bold uppercase">Categoría</Label>
+                    <Label htmlFor="modal-category" className="text-[10px] font-bold uppercase">Categoría</Label>
                     <Input
-                      id="modal-sub-category"
+                      id="modal-category"
                       name="category"
-                      placeholder="entretenimiento"
-                      defaultValue={editingSubscription?.category || "entretenimiento"}
+                      placeholder="servicios"
+                      defaultValue={editingSubscription?.category || "servicios"}
                     />
                   </div>
                 </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <Label htmlFor="modal-sub-freq" className="text-[10px] font-bold uppercase">Frecuencia de Cobro</Label>
-                    <SubscriptionFrequencySelect
-                      id="modal-sub-freq"
-                      name="billing_cycle"
-                      defaultValue={editingSubscription?.billing_cycle || "monthly"}
-                    />
+
+                {/* Toggle Recurrente */}
+                <div className="flex items-center justify-between p-3 bg-muted/20 border border-border rounded-xl">
+                  <div className="space-y-0.5">
+                    <span className="text-[10px] font-bold uppercase block">¿Es recurrente? (Suscripción)</span>
+                    <span className="text-[9px] text-muted-foreground font-mono">
+                      {isExpenseRecurring ? "Se debita periódicamente" : "Pago de una sola vez"}
+                    </span>
                   </div>
-                  <div className="space-y-1">
-                    <Label htmlFor="modal-sub-date" className="text-[10px] font-bold uppercase">Próximo Cobro</Label>
-                    <Input
-                      id="modal-sub-date"
-                      name="next_payment_date"
-                      type="date"
-                      defaultValue={
-                        editingSubscription?.next_payment_date
-                          ? editingSubscription.next_payment_date.split("T")[0]
-                          : new Date().toISOString().split("T")[0]
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (isPro) {
+                        setIsExpenseRecurring(!isExpenseRecurring);
+                      } else {
+                        // Pro Upgrade simulation trigger
+                        window.location.href = "/api/checkout/stripe?simulated=true";
                       }
+                    }}
+                    className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      isExpenseRecurring ? "bg-accent-soft-fg" : "bg-muted"
+                    }`}
+                  >
+                    <span
+                      className={`pointer-events-none inline-block size-4 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out ${
+                        isExpenseRecurring ? "translate-x-4" : "translate-x-0"
+                      }`}
+                    />
+                  </button>
+                  <input type="hidden" name="is_recurring" value={isExpenseRecurring ? "true" : "false"} />
+                </div>
+
+                {isExpenseRecurring ? (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div className="space-y-1">
+                      <Label htmlFor="modal-sub-freq" className="text-[10px] font-bold uppercase">Frecuencia de Cobro</Label>
+                      <SubscriptionFrequencySelect
+                        id="modal-sub-freq"
+                        name="billing_cycle"
+                        value={expenseFrequency}
+                        onChange={(e) => setExpenseFrequency(e.target.value)}
+                      />
+                    </div>
+                    <div className="space-y-1">
+                      <Label htmlFor="modal-sub-day" className="text-[10px] font-bold uppercase">Día del Mes</Label>
+                      <Input
+                        id="modal-sub-day"
+                        name="day_of_month"
+                        type="number"
+                        min="1"
+                        max={expenseFrequency === "bi-weekly" ? "15" : "31"}
+                        placeholder="5"
+                        value={expenseDay}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          const parsed = parseInt(val);
+                          const maxVal = expenseFrequency === "bi-weekly" ? 15 : 31;
+                          if (val === "") {
+                            setExpenseDay("");
+                          } else if (!isNaN(parsed)) {
+                            setExpenseDay(String(Math.max(1, Math.min(maxVal, parsed))));
+                          }
+                        }}
+                        required
+                      />
+                    </div>
+                    {expenseFrequency === "bi-weekly" && (
+                      <p className="col-span-2 text-[10px] text-accent-soft-fg font-mono mt-1 leading-relaxed">
+                        💡 Los pagos se realizarán los días {parseInt(expenseDay) || 1} y {(parseInt(expenseDay) || 1) + 15} de cada mes.
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    <Label htmlFor="modal-pay-date" className="text-[10px] font-bold uppercase">Fecha de Gasto</Label>
+                    <Input
+                      id="modal-pay-date"
+                      name="next_pay_date"
+                      type="date"
+                      defaultValue={new Date().toISOString().split("T")[0]}
                       required
                     />
                   </div>
-                </div>
+                )}
+
                 <div className="pt-2 flex space-x-2">
                   <Button
                     type="button"

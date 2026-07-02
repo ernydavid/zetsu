@@ -205,6 +205,30 @@
   html {
     @apply font-sans;
   }
+
+  /* Custom styled scrollbars matching the accent theme */
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--accent-soft-border);
+    border-radius: 9999px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--accent-soft-fg);
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: var(--accent-soft-border) transparent;
+  }
 }
 
 @utility border-premium {
