@@ -2,6 +2,11 @@
 
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
+import {
+  ensureFinanceSetup,
+  findCategoryByName,
+  upsertRecurringRule,
+} from "@/lib/finance/service";
 
 interface OnboardingIncome {
   source: string;
@@ -20,16 +25,21 @@ interface OnboardingSubscription {
 interface OnboardingData {
   fullName: string;
   currency: string;
+  accountName?: string;
+  openingBalance?: number;
   incomes?: OnboardingIncome[];
   subscriptions?: OnboardingSubscription[];
   billingTier: "free" | "pro";
+}
+
+function todayIso() {
+  return new Date().toISOString().split("T")[0];
 }
 
 export async function submitOnboarding(data: OnboardingData) {
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  // 1. Get authenticated user
   const {
     data: { user },
     error: userError,
@@ -39,12 +49,12 @@ export async function submitOnboarding(data: OnboardingData) {
     return { error: "No se pudo autenticar al usuario. Inicia sesión nuevamente." };
   }
 
-  // 2. Update user profile
   const { error: profileError } = await supabase
     .from("profiles")
     .update({
       full_name: data.fullName,
       currency: data.currency,
+      base_currency: data.currency,
       billing_tier: data.billingTier,
       updated_at: new Date().toISOString(),
     })
@@ -54,38 +64,81 @@ export async function submitOnboarding(data: OnboardingData) {
     return { error: `Error al actualizar perfil: ${profileError.message}` };
   }
 
-  // 3. Insert incomes if provided
+  const primaryAccount = await ensureFinanceSetup(
+    supabase,
+    user.id,
+    data.currency,
+    data.accountName || data.fullName,
+    data.openingBalance ?? 0,
+  );
+
+  if (data.accountName?.trim()) {
+    await supabase
+      .from("accounts")
+      .update({
+        name: data.accountName.trim(),
+        opening_balance: data.openingBalance ?? 0,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", primaryAccount.id)
+      .eq("user_id", user.id);
+  }
+
+  const incomeCategory = await findCategoryByName(supabase, user.id, "ingreso", "income");
+
   if (data.incomes && data.incomes.length > 0) {
-    const incomesToInsert = data.incomes.map((inc) => ({
-      user_id: user.id,
-      source: inc.source,
-      amount: inc.amount,
-      frequency: inc.frequency,
-    }));
+    for (const income of data.incomes) {
+      if (income.frequency === "one-time") {
+        await supabase.from("transactions").insert({
+          user_id: user.id,
+          account_id: primaryAccount.id,
+          title: income.source,
+          amount: income.amount,
+          kind: "income",
+          status: "posted",
+          transaction_date: todayIso(),
+          posted_date: todayIso(),
+          category_id: incomeCategory.id,
+          category: incomeCategory.name,
+          source_type: "manual_income",
+        });
+        continue;
+      }
 
-    const { error: incomeError } = await supabase.from("incomes").insert(incomesToInsert);
-
-    if (incomeError) {
-      return { error: `Error al registrar ingresos: ${incomeError.message}` };
+      await upsertRecurringRule({
+        supabase,
+        userId: user.id,
+        accountId: primaryAccount.id,
+        categoryId: incomeCategory.id,
+        kind: "income",
+        name: income.source,
+        amount: income.amount,
+        cadence: income.frequency,
+        anchorDate: todayIso(),
+      });
     }
   }
 
-  // 4. Insert subscriptions if provided
   if (data.subscriptions && data.subscriptions.length > 0) {
-    const subsToInsert = data.subscriptions.map((sub) => ({
-      user_id: user.id,
-      name: sub.name,
-      amount: sub.amount,
-      billing_cycle: sub.billing_cycle,
-      category: sub.category || "entretenimiento",
-      next_payment_date: sub.next_payment_date || new Date(new Date().getFullYear(), new Date().getMonth() + 1, 5).toISOString().split('T')[0],
-      status: "active",
-    }));
+    for (const subscription of data.subscriptions) {
+      const expenseCategory = await findCategoryByName(
+        supabase,
+        user.id,
+        (subscription.category || "otros").toLowerCase(),
+        "expense",
+      );
 
-    const { error: subError } = await supabase.from("subscriptions").insert(subsToInsert);
-
-    if (subError) {
-      return { error: `Error al registrar suscripciones: ${subError.message}` };
+      await upsertRecurringRule({
+        supabase,
+        userId: user.id,
+        accountId: primaryAccount.id,
+        categoryId: expenseCategory.id,
+        kind: "expense",
+        name: subscription.name,
+        amount: subscription.amount,
+        cadence: subscription.billing_cycle,
+        anchorDate: subscription.next_payment_date || todayIso(),
+      });
     }
   }
 

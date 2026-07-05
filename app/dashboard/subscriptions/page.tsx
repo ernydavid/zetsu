@@ -3,16 +3,12 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { SubscriptionsClient } from "./subscriptions-client";
+import { getFinanceSnapshot } from "@/lib/finance/service";
 
-interface PageProps {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
-}
-
-export default async function SubscriptionsPage({ searchParams }: PageProps) {
+export default async function SubscriptionsPage() {
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  // 1. Authenticate user
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -21,37 +17,31 @@ export default async function SubscriptionsPage({ searchParams }: PageProps) {
     redirect("/auth/login");
   }
 
-  // 2. Fetch user profile
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
+  const snapshot = await getFinanceSnapshot(supabase, user.id);
 
-  if (!profile || !profile.full_name || !profile.currency) {
+  if (!snapshot.profile || !snapshot.profile.full_name || !snapshot.profile.base_currency) {
     redirect("/onboarding");
   }
 
-  const currency = profile.currency;
-  const isPro = profile.billing_tier === "pro";
+  const categoryMap = new Map(snapshot.categories.map((category) => [category.id, category.name]));
 
-  // 3. Fetch recurring subscription templates
-  let subscriptions: any[] = [];
-  if (isPro) {
-    const { data: subs } = await supabase
-      .from("subscriptions")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-    subscriptions = subs || [];
-  }
+  const subscriptions = snapshot.recurringRules
+    .filter((rule) => rule.kind === "expense" && rule.active && !rule.archived_at)
+    .map((rule) => ({
+      id: rule.id,
+      name: rule.name,
+      amount: Number(rule.amount),
+      billing_cycle: rule.cadence,
+      next_payment_date: rule.next_occurrence,
+      category: rule.category_id ? categoryMap.get(rule.category_id) ?? "otros" : "otros",
+    }));
 
   return (
     <SubscriptionsClient
-      profile={profile}
+      profile={snapshot.profile}
       subscriptions={subscriptions}
-      isPro={isPro}
-      currency={currency}
+      isPro={snapshot.profile.billing_tier === "pro"}
+      currency={snapshot.profile.base_currency}
     />
   );
 }

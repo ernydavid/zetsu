@@ -32,11 +32,11 @@ export default async function SettingsPage({ searchParams }: PageProps) {
     .eq("id", user.id)
     .single();
 
-  if (!profile || !profile.full_name || !profile.currency) {
+  if (!profile || !profile.full_name || !profile.base_currency) {
     redirect("/onboarding");
   }
 
-  const currency = profile.currency;
+  const currency = profile.base_currency;
   const isPro = profile.billing_tier === "pro";
 
   return (

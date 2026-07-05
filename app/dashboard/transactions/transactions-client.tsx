@@ -7,7 +7,6 @@ import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { ThemeToggle } from "@/components/common/theme-toggle";
 import { Sidebar } from "@/components/common/sidebar";
-import { useAccentTheme, AccentTheme } from "@/components/common/theme-context";
 import { signout } from "@/app/auth/actions";
 import { sileo } from "sileo";
 import {
@@ -53,9 +52,9 @@ export function TransactionsClient({
   isPro,
   currency,
 }: TransactionsClientProps) {
-  const { accentTheme, setAccentTheme } = useAccentTheme();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
+  const [statusPendingId, setStatusPendingId] = React.useState<string | null>(null);
 
   // Search & Filter States
   const [searchTerm, setSearchTerm] = React.useState("");
@@ -174,14 +173,6 @@ export function TransactionsClient({
     const startIndex = (currentPage - 1) * pageSize;
     return filteredAndSorted.slice(startIndex, startIndex + pageSize);
   }, [filteredAndSorted, currentPage]);
-
-  const themes: { id: AccentTheme; name: string; class: string }[] = [
-    { id: "slate", name: "Slate", class: "bg-slate-400 dark:bg-slate-600" },
-    { id: "lavender", name: "Lavender", class: "bg-violet-400 dark:bg-violet-600" },
-    { id: "mint", name: "Mint", class: "bg-emerald-400 dark:bg-emerald-600" },
-    { id: "sky", name: "Sky", class: "bg-sky-400 dark:bg-sky-600" },
-    { id: "peach", name: "Peach", class: "bg-orange-400 dark:bg-orange-600" },
-  ];
 
   return (
     <div className="h-screen overflow-hidden bg-background text-foreground flex flex-col lg:flex-row font-sans">
@@ -407,6 +398,7 @@ export function TransactionsClient({
                         <button
                           type="button"
                           onClick={() => {
+                            setStatusPendingId(tx.id);
                             startTransition(async () => {
                               try {
                                 await togglePaymentStatus(tx.id, tx.status || "unpaid");
@@ -420,6 +412,8 @@ export function TransactionsClient({
                                   throw err;
                                 }
                                 sileo.error({ title: err.message || "Error al actualizar estado" });
+                              } finally {
+                                setStatusPendingId(null);
                               }
                             });
                           }}
@@ -428,9 +422,14 @@ export function TransactionsClient({
                               ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/5 font-bold"
                               : "border-border text-muted-foreground"
                           } rounded-md hover:opacity-80 transition-opacity`}
-                          disabled={isPending}
+                          disabled={isPending || statusPendingId === tx.id}
                         >
-                          {tx.status === "paid" ? "PAGADO" : "PENDIENTE"}
+                          {statusPendingId === tx.id ? (
+                            <span className="inline-flex items-center gap-1.5">
+                              <IconLoader2 className="size-3 animate-spin" />
+                              actualizando
+                            </span>
+                          ) : tx.status === "paid" ? "PAGADO" : "PENDIENTE"}
                         </button>
                       )}
 
@@ -502,36 +501,6 @@ export function TransactionsClient({
             </div>
           )}
 
-          {/* Theme Settings: Soft Accents Picker */}
-          <Card className="bg-background border border-premium max-w-sm">
-            <div className="p-4 space-y-3">
-              <div className="space-y-1">
-                <h3 className="font-heading-style font-bold text-xs lowercase">/personalizar_acento</h3>
-                <p className="text-[10px] text-muted-foreground font-mono">
-                  Aplica un matiz de color suave a botones, gráficos y tarjetas destacadas.
-                </p>
-              </div>
-
-              <div className="flex items-center space-x-3 pt-1">
-                {themes.map((theme) => {
-                  const isActive = accentTheme === theme.id;
-                  return (
-                    <button
-                      key={theme.id}
-                      onClick={() => setAccentTheme(theme.id)}
-                      className={`size-6 rounded-full ${theme.class} border ${
-                        isActive
-                          ? "border-foreground scale-110 ring-2 ring-foreground/20"
-                          : "border-border hover:scale-105"
-                      } transition-all duration-200 cursor-pointer`}
-                      aria-label={`Acento ${theme.name}`}
-                      title={theme.name}
-                    />
-                  );
-                })}
-              </div>
-            </div>
-          </Card>
         </div>
       </main>
 

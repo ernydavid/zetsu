@@ -682,7 +682,7 @@ export function SubscriptionsClient({
 
             <div className="space-y-4">
               <p className="text-[10px] leading-relaxed text-muted-foreground">
-                ¿Estás seguro de que deseas eliminar el pago recurrente de <strong className="text-foreground">"{deleteTarget.name.toLowerCase()}"</strong>? Se eliminarán todas las transacciones históricas generadas por esta plantilla recurrente. Esta acción no se puede deshacer.
+                ¿Estás seguro de que deseas archivar el pago recurrente de <strong className="text-foreground">"{deleteTarget.name.toLowerCase()}"</strong>? Solo se cancelarán las ocurrencias futuras pendientes; el historial ya registrado se conservará.
               </p>
 
               <div className="flex space-x-2">

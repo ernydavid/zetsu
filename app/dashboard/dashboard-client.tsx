@@ -50,14 +50,13 @@ interface DashboardClientProps {
   subscriptions: any[];
   isPro: boolean;
   currency: string;
-  totalIncome: number; // Real monthly income
-  totalIncomeBase: number; // Projected base income
-  totalPayments: number; // Real manual payments this month
-  totalSubscriptions: number; // Base subscriptions
-  netBalance: number; // Balance Libre Neto (Projected)
-  balanceReal: number; // Balance Real (Actual paid all time)
-  totalExpensesSinceLastIncome: number; // Real expenses since last payday
-  lastIncomeDateText: string;
+  availableBalance: number;
+  netWorth: number;
+  monthlyIncome: number;
+  monthlyExpenses: number;
+  availableToBudget: number;
+  projectedCashflow: number;
+  runwayDays: number | null;
   errorMsg?: string;
   upgradeMsg?: string;
 }
@@ -69,14 +68,13 @@ export function DashboardClient({
   subscriptions = [],
   isPro,
   currency,
-  totalIncome,
-  totalIncomeBase = 0,
-  totalPayments,
-  totalSubscriptions,
-  netBalance,
-  balanceReal = 0,
-  totalExpensesSinceLastIncome = 0,
-  lastIncomeDateText = "sin ingresos",
+  availableBalance,
+  netWorth,
+  monthlyIncome,
+  monthlyExpenses,
+  availableToBudget,
+  projectedCashflow,
+  runwayDays,
   errorMsg,
   upgradeMsg,
 }: DashboardClientProps) {
@@ -88,6 +86,7 @@ export function DashboardClient({
   const [isExpenseRecurring, setIsExpenseRecurring] = React.useState(false);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
+  const [statusPendingId, setStatusPendingId] = React.useState<string | null>(null);
 
   const [deleteTarget, setDeleteTarget] = React.useState<{
     title: string;
@@ -102,6 +101,7 @@ export function DashboardClient({
 
   React.useEffect(() => {
     if (editingIncome) {
+      setIsIncomeRecurring(true);
       setIncomeFrequency(editingIncome.frequency || "monthly");
       if (editingIncome.next_pay_date) {
         const d = new Date(editingIncome.next_pay_date);
@@ -112,6 +112,7 @@ export function DashboardClient({
         setIncomeDay(String(new Date().getUTCDate()));
       }
     } else {
+      setIsIncomeRecurring(false);
       setIncomeFrequency("monthly");
       setIncomeDay(String(new Date().getUTCDate()));
     }
@@ -119,6 +120,7 @@ export function DashboardClient({
 
   React.useEffect(() => {
     if (editingSubscription) {
+      setIsExpenseRecurring(true);
       setExpenseFrequency(editingSubscription.billing_cycle || "monthly");
       if (editingSubscription.next_payment_date) {
         const d = new Date(editingSubscription.next_payment_date);
@@ -129,6 +131,7 @@ export function DashboardClient({
         setExpenseDay(String(new Date().getUTCDate()));
       }
     } else {
+      setIsExpenseRecurring(false);
       setExpenseFrequency("monthly");
       setExpenseDay(String(new Date().getUTCDate()));
     }
@@ -226,29 +229,31 @@ export function DashboardClient({
   };
 
   // Math for SVG Donut Chart
-  const totalExpenses = totalPayments + totalSubscriptions;
+  const chartAvailable = Math.max(availableToBudget, 0);
+  const chartProjectedOutflows = Math.max(-projectedCashflow, 0);
+  const totalExpenses = monthlyExpenses + chartProjectedOutflows;
   let savingsPct = 0;
   let paymentsPct = 0;
   let subscriptionsPct = 0;
 
-  const incomeForChart = totalIncomeBase > 0 ? totalIncomeBase : totalIncome;
+  const incomeForChart = chartAvailable + monthlyExpenses + chartProjectedOutflows;
 
   if (incomeForChart > 0) {
     if (incomeForChart >= totalExpenses) {
-      const net = incomeForChart - totalExpenses;
+      const net = chartAvailable;
       savingsPct = (net / incomeForChart) * 100;
-      paymentsPct = (totalPayments / incomeForChart) * 100;
-      subscriptionsPct = (totalSubscriptions / incomeForChart) * 100;
+      paymentsPct = (monthlyExpenses / incomeForChart) * 100;
+      subscriptionsPct = (chartProjectedOutflows / incomeForChart) * 100;
     } else {
-      const totalOut = totalPayments + totalSubscriptions;
-      paymentsPct = (totalPayments / totalOut) * 100;
-      subscriptionsPct = (totalSubscriptions / totalOut) * 100;
+      const totalOut = Math.max(totalExpenses, 1);
+      paymentsPct = (monthlyExpenses / totalOut) * 100;
+      subscriptionsPct = (chartProjectedOutflows / totalOut) * 100;
       savingsPct = 0;
     }
   } else {
     if (totalExpenses > 0) {
-      paymentsPct = (totalPayments / totalExpenses) * 100;
-      subscriptionsPct = (totalSubscriptions / totalExpenses) * 100;
+      paymentsPct = (monthlyExpenses / totalExpenses) * 100;
+      subscriptionsPct = (chartProjectedOutflows / totalExpenses) * 100;
       savingsPct = 0;
     } else {
       savingsPct = 100; // Empty state
@@ -327,7 +332,7 @@ export function DashboardClient({
         name: pay.title,
         amount: Math.abs(Number(pay.amount)),
         date: new Date(pay.date || Date.now()),
-        type: "payment" as const,
+        type: Number(pay.amount) > 0 ? ("income" as const) : ("payment" as const),
         displayFreq: "manual",
       })),
   ].sort((a, b) => a.date.getTime() - b.date.getTime());
@@ -532,25 +537,25 @@ export function DashboardClient({
                 {/* Top Section: Net Balance */}
                 <div className="space-y-1">
                   <span className="text-[10px] uppercase font-mono text-accent-soft-fg font-bold tracking-wider block">
-                    balance libre neto
+                    saldo disponible
                   </span>
                   <p className="text-3xl md:text-4xl font-mono font-bold tracking-tighter text-foreground">
-                    {formatMoney(netBalance)}
+                    {formatMoney(availableBalance)}
                   </p>
                   <span className="text-[9px] font-mono text-muted-foreground block">
-                    proyección mensual basada en tus ingresos y suscripciones base
+                    efectivo real en cuentas presupuestables con movimientos posteados o conciliados
                   </span>
 
-                  {/* Balance Real (Based on completed transactions) */}
+                  {/* Net worth */}
                   <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-2.5 pt-2 border-t border-dashed border-accent-soft-border/30">
                     <span className="text-[9px] uppercase font-mono text-accent-soft-fg/75 font-bold tracking-wider">
-                      balance real:
+                      patrimonio neto:
                     </span>
                     <span className="text-sm font-mono font-bold text-foreground">
-                      {formatMoney(balanceReal)}
+                      {formatMoney(netWorth)}
                     </span>
                     <span className="text-[9px] text-muted-foreground font-mono">
-                      • según transacciones efectivamente liquidadas (pagadas)
+                      • activos menos pasivos ya liquidados
                     </span>
                   </div>
                 </div>
@@ -562,32 +567,31 @@ export function DashboardClient({
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
                   <div className="space-y-1">
                     <span className="text-[10px] uppercase font-mono text-accent-soft-fg font-bold tracking-wider block">
-                      ingresos netos (base)
+                      ingresos del mes
                     </span>
                     <p className="text-xl md:text-2xl font-mono font-bold tracking-tight text-emerald-600 dark:text-emerald-400">
-                      {formatMoney(totalIncomeBase)}
+                      {formatMoney(monthlyIncome)}
                     </p>
                     <div className="text-[9px] font-mono text-muted-foreground block space-y-0.5">
-                      <p>{incomes?.length || 0} fuentes activas</p>
+                      <p>{incomes?.length || 0} reglas de ingreso activas</p>
                       <p className="text-[8px] text-emerald-600 dark:text-emerald-400">
-                        ingresos reales este mes: {formatMoney(totalIncome)}
+                        disponible para presupuestar: {formatMoney(availableToBudget)}
                       </p>
                     </div>
                   </div>
 
                   <div className="space-y-1 sm:border-l sm:border-dashed sm:border-accent-soft-border/50 sm:pl-6">
                     <span className="text-[10px] uppercase font-mono text-accent-soft-fg font-bold tracking-wider block">
-                      egresos netos (base)
+                      egresos del mes
                     </span>
                     <p className="text-xl md:text-2xl font-mono font-bold tracking-tight text-destructive">
-                      -{formatMoney(totalSubscriptions + totalPayments)}
+                      -{formatMoney(monthlyExpenses)}
                     </p>
                     <div className="text-[9px] font-mono text-muted-foreground block space-y-0.5">
-                      <p>suscripciones base + pagos manuales</p>
+                      <p>{subscriptions?.length || 0} reglas de gasto activas</p>
                       <p className="text-[8px] text-destructive">
-                        {lastIncomeDateText !== "sin ingresos"
-                          ? `egresos reales (desde ${formatDate(lastIncomeDateText)}): -${formatMoney(totalExpensesSinceLastIncome)}`
-                          : `egresos reales este mes: -${formatMoney(totalExpensesSinceLastIncome)}`}
+                        flujo proyectado 30 días: {projectedCashflow >= 0 ? "+" : "-"}
+                        {formatMoney(Math.abs(projectedCashflow))}
                       </p>
                     </div>
                   </div>
@@ -598,10 +602,10 @@ export function DashboardClient({
             {/* Upcoming Payments (Horizontal Row like the mockup) */}
             <div className="space-y-3">
               <div className="flex justify-between items-center">
-                <h2 className="font-heading-style text-lg font-bold tracking-tight text-foreground lowercase">
-                  /próximos pagos
-                </h2>
-                <span className="text-[10px] font-mono text-muted-foreground uppercase">siguiente vencimiento</span>
+                  <h2 className="font-heading-style text-lg font-bold tracking-tight text-foreground lowercase">
+                  /próximos 30 días
+                  </h2>
+                  <span className="text-[10px] font-mono text-muted-foreground uppercase">agenda de movimientos</span>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -635,7 +639,11 @@ export function DashboardClient({
                               ? "border-accent-soft-border/30 bg-background/50 text-accent-soft-fg"
                               : "border-border bg-muted/10 text-muted-foreground"
                           }`}>
-                            {event.type === "subscription" ? "recurrente" : "pendiente"}
+                            {event.type === "subscription"
+                              ? "recurrente"
+                              : event.type === "income"
+                                ? "ingreso"
+                                : "pendiente"}
                           </span>
                         </div>
                         <div className="mt-4">
@@ -643,7 +651,7 @@ export function DashboardClient({
                           <div className="flex justify-between items-end mt-1">
                             <p className="text-xs font-mono text-muted-foreground">
                               <span className="font-bold text-foreground">{formatMoney(event.amount)}</span>
-                              {event.type === "subscription" && `/${event.displayFreq}`}
+                              {(event.type === "subscription" || event.type === "income") && `/${event.displayFreq}`}
                             </p>
                             <p className={`text-[10px] font-mono font-bold ${
                               isFirst ? "text-accent-soft-fg animate-pulse" : "text-muted-foreground"
@@ -711,6 +719,7 @@ export function DashboardClient({
                             <button
                               type="button"
                               onClick={() => {
+                                setStatusPendingId(tx.id);
                                 startTransition(async () => {
                                   try {
                                     await togglePaymentStatus(tx.id, tx.status || "unpaid");
@@ -724,6 +733,8 @@ export function DashboardClient({
                                       throw err;
                                     }
                                     sileo.error({ title: err.message || "Error al actualizar estado" });
+                                  } finally {
+                                    setStatusPendingId(null);
                                   }
                                 });
                               }}
@@ -732,9 +743,14 @@ export function DashboardClient({
                                   ? "border-emerald-500/30 text-emerald-600 bg-emerald-500/5 font-bold"
                                   : "border-border text-muted-foreground"
                               } rounded-md hover:opacity-80 transition-opacity`}
-                              disabled={isPending}
+                              disabled={isPending || statusPendingId === tx.id}
                             >
-                              {tx.status === "paid" ? "PAGADO" : "PENDIENTE"}
+                              {statusPendingId === tx.id ? (
+                                <span className="inline-flex items-center gap-1.5">
+                                  <IconLoader2 className="size-3 animate-spin" />
+                                  actualizando
+                                </span>
+                              ) : tx.status === "paid" ? "PAGADO" : "PENDIENTE"}
                             </button>
                           )}
 
@@ -817,10 +833,10 @@ export function DashboardClient({
                   </svg>
                   <div className="absolute flex flex-col items-center justify-center text-center">
                     <span className="text-2xl font-bold font-mono tracking-tighter">
-                      {formatCompactMoney(netBalance)}
+                      {formatCompactMoney(availableBalance)}
                     </span>
                     <span className="text-[9px] text-muted-foreground uppercase font-mono tracking-wider mt-1">
-                      ahorro libre
+                      caja disponible
                     </span>
                   </div>
                 </div>
@@ -829,17 +845,17 @@ export function DashboardClient({
                 <div className="grid grid-cols-3 gap-2 border-t border-dashed border-border pt-4 text-center font-mono text-[10px]">
                   <div className="space-y-1">
                     <span className="inline-block size-2 rounded-full bg-accent-soft-fg" />
-                    <p className="text-muted-foreground">Ahorros</p>
+                    <p className="text-muted-foreground">Presup.</p>
                     <p className="font-bold text-foreground">{savingsPct.toFixed(0)}%</p>
                   </div>
                   <div className="space-y-1">
                     <span className="inline-block size-2 rounded-full bg-muted-foreground" />
-                    <p className="text-muted-foreground">Gastos</p>
+                    <p className="text-muted-foreground">Mes</p>
                     <p className="font-bold text-foreground">{paymentsPct.toFixed(0)}%</p>
                   </div>
                   <div className="space-y-1">
                     <span className="inline-block size-2 rounded-full bg-accent-soft-fg opacity-40" />
-                    <p className="text-muted-foreground">Suscrip.</p>
+                    <p className="text-muted-foreground">Próx.30d</p>
                     <p className="font-bold text-foreground">{subscriptionsPct.toFixed(0)}%</p>
                   </div>
                 </div>
@@ -907,16 +923,18 @@ export function DashboardClient({
                 {isPro ? (
                   <div className="space-y-3 font-mono text-[10px] leading-relaxed">
                     <p className="text-muted-foreground">
-                      Tu capacidad de ahorro acumulada en base al balance libre neto actual:
+                      Tu operación financiera proyectada con la caja y el flujo actual:
                     </p>
                     <div className="grid grid-cols-2 gap-2 pt-1">
                       <div className="p-2 border border-premium rounded-xl bg-card">
-                        <span className="text-muted-foreground block uppercase text-[8px]">En 3 meses</span>
-                        <span className="font-bold text-foreground">{formatMoney(netBalance * 3)}</span>
+                        <span className="text-muted-foreground block uppercase text-[8px]">Flujo 90 días</span>
+                        <span className="font-bold text-foreground">{formatMoney(projectedCashflow * 3)}</span>
                       </div>
                       <div className="p-2 border border-premium rounded-xl bg-card">
-                        <span className="text-muted-foreground block uppercase text-[8px]">En 12 meses</span>
-                        <span className="font-bold text-emerald-600 dark:text-emerald-400">{formatMoney(netBalance * 12)}</span>
+                        <span className="text-muted-foreground block uppercase text-[8px]">Runway aprox.</span>
+                        <span className="font-bold text-emerald-600 dark:text-emerald-400">
+                          {runwayDays ? `${runwayDays} días` : "estable"}
+                        </span>
                       </div>
                     </div>
                   </div>

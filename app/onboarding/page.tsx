@@ -53,6 +53,8 @@ export default function OnboardingPage() {
   const [error, setError] = React.useState("");
   const [fullName, setFullName] = React.useState("");
   const [currency, setCurrency] = React.useState("USD");
+  const [accountName, setAccountName] = React.useState("Cuenta principal");
+  const [openingBalance, setOpeningBalance] = React.useState("0");
 
   // Collected Lists
   const [incomesList, setIncomesList] = React.useState<IncomeItem[]>([]);
@@ -121,6 +123,10 @@ export default function OnboardingPage() {
   const handleStep1Submit = () => {
     if (!fullName.trim()) {
       setError("Por favor, ingresa tu nombre.");
+      return;
+    }
+    if (!accountName.trim()) {
+      setError("Asigna un nombre a tu cuenta principal.");
       return;
     }
     setError("");
@@ -198,6 +204,8 @@ export default function OnboardingPage() {
       const result = await submitOnboarding({
         fullName,
         currency,
+        accountName,
+        openingBalance: Number.parseFloat(openingBalance || "0") || 0,
         incomes: incomesList,
         subscriptions: subscriptionsList,
         billingTier: selectedPlan,
@@ -310,6 +318,32 @@ export default function OnboardingPage() {
                         ▼
                       </div>
                     </div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="accountName">Cuenta principal</Label>
+                    <Input
+                      id="accountName"
+                      value={accountName}
+                      onChange={(e) => setAccountName(e.target.value)}
+                      placeholder="Ej. Cuenta principal"
+                      required
+                    />
+                  </div>
+
+                  <div className="space-y-2">
+                    <Label htmlFor="openingBalance">Saldo inicial ({currency})</Label>
+                    <Input
+                      id="openingBalance"
+                      type="number"
+                      step="0.01"
+                      value={openingBalance}
+                      onChange={(e) => setOpeningBalance(e.target.value)}
+                      placeholder="0"
+                    />
+                    <p className="text-[10px] text-muted-foreground font-mono">
+                      Este saldo inicial representa el dinero real con el que empiezas a usar Zetsu.
+                    </p>
                   </div>
                 </div>
 

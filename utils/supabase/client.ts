@@ -1,7 +1,11 @@
 import { createBrowserClient } from "@supabase/ssr";
-
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+import {
+  supabaseCookieOptions,
+  supabaseKey,
+  supabaseUrl,
+} from "@/utils/supabase/config";
 
 export const createClient = () =>
-  createBrowserClient(supabaseUrl!, supabaseKey!);
+  createBrowserClient(supabaseUrl!, supabaseKey!, {
+    cookieOptions: supabaseCookieOptions,
+  });

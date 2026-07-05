@@ -1,31 +1,30 @@
 "use client";
 
-import * as React from "react";
 import Link from "next/link";
 import { useActionState } from "react";
 import { useSearchParams } from "next/navigation";
-import { login } from "@/app/auth/actions";
+import { requestPasswordReset } from "@/app/auth/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
 import { ThemeToggle } from "@/components/common/theme-toggle";
 
-export default function LoginPage() {
+export default function ForgotPasswordPage() {
   const searchParams = useSearchParams();
-  const [state, formAction, isPending] = useActionState(login, null);
-  const message = searchParams.get("message");
-  const [email, setEmail] = React.useState("");
+  const [state, formAction, isPending] = useActionState(
+    requestPasswordReset,
+    null,
+  );
+  const callbackError = searchParams.get("error");
 
   return (
     <main className="flex-1 flex flex-col justify-center items-center min-h-screen p-4 md:p-8 bg-background">
-      {/* Theme Toggle at top right */}
       <div className="absolute top-6 right-6">
         <ThemeToggle />
       </div>
 
       <div className="w-full max-w-[400px] space-y-8">
-        {/* Brand Header */}
         <div className="space-y-2">
           <Link
             href="/"
@@ -34,7 +33,7 @@ export default function LoginPage() {
             zetsu<span className="text-primary font-serif">.</span>
           </Link>
           <p className="text-sm font-mono text-muted-foreground uppercase tracking-wider">
-            Inicia sesión para gestionar tus finanzas
+            Recupera el acceso a tu cuenta
           </p>
         </div>
 
@@ -51,35 +50,22 @@ export default function LoginPage() {
                   required
                   autoComplete="email"
                   disabled={isPending}
-                  value={email}
-                  onChange={(event) => setEmail(event.target.value)}
                 />
+                <p className="text-[11px] font-mono text-muted-foreground leading-relaxed">
+                  Te enviaremos un enlace de un solo uso para restablecer tu
+                  contraseña.
+                </p>
               </div>
 
-              <div className="space-y-2">
-                <div className="flex justify-between items-center">
-                  <Label htmlFor="password">Contraseña</Label>
-                  <Link
-                    href="/auth/forgot-password"
-                    className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground hover:text-foreground transition-colors"
-                  >
-                    olvidé mi contraseña
-                  </Link>
+              {state?.success && (
+                <div className="p-3 border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs font-mono leading-relaxed">
+                  {state.success}
                 </div>
-                <Input
-                  id="password"
-                  name="password"
-                  type="password"
-                  placeholder="••••••••"
-                  required
-                  autoComplete="current-password"
-                  disabled={isPending}
-                />
-              </div>
+              )}
 
-              {message && (
-                <div className="p-3 border border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 text-xs font-mono">
-                  {message}
+              {callbackError && (
+                <div className="p-3 border border-destructive bg-destructive/10 text-destructive text-xs font-mono leading-relaxed">
+                  {callbackError}
                 </div>
               )}
 
@@ -95,19 +81,19 @@ export default function LoginPage() {
                 className="w-full justify-center"
                 disabled={isPending}
               >
-                {isPending ? "INGRESANDO..." : "INICIAR SESIÓN"}
+                {isPending ? "ENVIANDO..." : "ENVIAR ENLACE"}
               </Button>
             </form>
           </CardContent>
         </Card>
 
         <p className="text-center text-xs font-mono text-muted-foreground uppercase tracking-wider">
-          ¿No tienes una cuenta?{" "}
+          ¿Recordaste tu clave?{" "}
           <Link
-            href="/auth/signup"
+            href="/auth/login"
             className="text-foreground underline underline-offset-4 font-bold hover:text-muted-foreground transition-colors"
           >
-            REGÍSTRATE AQUÍ
+            VOLVER AL LOGIN
           </Link>
         </p>
       </div>

@@ -629,7 +629,7 @@ export function SettingsClient({
       {/* MODAL 2: Configure Again Dialog */}
       {showConfigureAgain && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-md animate-fade-in px-4">
-          <Card className="max-w-sm w-full bg-card border border-premium shadow-premium-lg relative animate-scale-up">
+          <Card className="max-w-md w-full bg-card border border-premium shadow-premium-lg relative animate-scale-up">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-heading-style text-sm font-bold tracking-tight text-foreground lowercase flex items-center gap-1.5">
                 <IconSparkles className="size-4 text-accent-soft-fg" />
@@ -645,11 +645,11 @@ export function SettingsClient({
                 ¿Deseas volver a configurar tu aplicación Zetsu desde cero ahora mismo? Si eliges **Sí**, te redirigiremos al onboarding multipaso. Si eliges **No**, volverás al dashboard limpio.
               </p>
 
-              <div className="pt-2 flex space-x-2">
+              <div className="pt-2 flex flex-col gap-2 sm:flex-row">
                 <Button
                   type="button"
                   variant="outline"
-                  className="flex-1 justify-center py-2"
+                  className="w-full justify-center py-2 sm:flex-1"
                   onClick={() => handleClearDataConfirm(false)}
                   disabled={isPending}
                 >
@@ -658,7 +658,7 @@ export function SettingsClient({
                 <Button
                   type="button"
                   variant="default"
-                  className="flex-1 justify-center py-2 gap-1.5"
+                  className="w-full justify-center py-2 gap-1.5 whitespace-normal sm:flex-1"
                   onClick={() => handleClearDataConfirm(true)}
                   disabled={isPending}
                 >

@@ -3,16 +3,12 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { TransactionsClient } from "./transactions-client";
+import { getFinanceSnapshot } from "@/lib/finance/service";
 
-interface PageProps {
-  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
-}
-
-export default async function TransactionsPage({ searchParams }: PageProps) {
+export default async function TransactionsPage() {
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  // 1. Authenticate user
   const {
     data: { user },
   } = await supabase.auth.getUser();
@@ -21,51 +17,64 @@ export default async function TransactionsPage({ searchParams }: PageProps) {
     redirect("/auth/login");
   }
 
-  // 2. Fetch user profile
-  const { data: profile } = await supabase
-    .from("profiles")
-    .select("*")
-    .eq("id", user.id)
-    .single();
+  const snapshot = await getFinanceSnapshot(supabase, user.id);
 
-  if (!profile || !profile.full_name || !profile.currency) {
+  if (!snapshot.profile || !snapshot.profile.full_name || !snapshot.profile.base_currency) {
     redirect("/onboarding");
   }
 
-  const currency = profile.currency;
-  const isPro = profile.billing_tier === "pro";
+  const categoryMap = new Map(snapshot.categories.map((category) => [category.id, category.name]));
 
-  // 3. Fetch financial data
-  const { data: incomes } = await supabase
-    .from("incomes")
-    .select("*")
-    .eq("user_id", user.id)
-    .order("created_at", { ascending: false });
+  const incomes = snapshot.recurringRules
+    .filter((rule) => rule.kind === "income")
+    .map((rule) => ({
+      id: rule.id,
+      source: rule.name,
+      amount: Number(rule.amount),
+      frequency: rule.cadence,
+      next_pay_date: rule.next_occurrence,
+    }));
 
-  const { data: transactions } = await supabase
-    .from("transactions")
-    .select("*")
-    .eq("user_id", user.id)
-    .order("date", { ascending: false });
+  const subscriptions = snapshot.recurringRules
+    .filter((rule) => rule.kind === "expense")
+    .map((rule) => ({
+      id: rule.id,
+      name: rule.name,
+      amount: Number(rule.amount),
+      billing_cycle: rule.cadence,
+      next_payment_date: rule.next_occurrence,
+      category: rule.category_id ? categoryMap.get(rule.category_id) ?? "otros" : "otros",
+    }));
 
-  let subscriptions: any[] = [];
-  if (isPro) {
-    const { data: subs } = await supabase
-      .from("subscriptions")
-      .select("*")
-      .eq("user_id", user.id)
-      .order("created_at", { ascending: false });
-    subscriptions = subs || [];
-  }
+  const payments = snapshot.transactions.map((tx) => ({
+    id: tx.id,
+    title: tx.title,
+    amount: tx.kind === "income" ? Number(tx.amount) : tx.kind === "expense" ? -Number(tx.amount) : 0,
+    date: tx.transaction_date,
+    created_at: tx.created_at,
+    category: tx.category_id ? categoryMap.get(tx.category_id) ?? "otros" : "otros",
+    status: tx.status === "posted" || tx.status === "reconciled" ? "paid" : "unpaid",
+    source_type:
+      tx.kind === "income"
+        ? tx.recurring_rule_id
+          ? "income_recurring"
+          : "manual_income"
+        : tx.kind === "expense"
+          ? tx.recurring_rule_id
+            ? "subscription_recurring"
+            : "manual_expense"
+          : "manual_transfer",
+    source_id: tx.recurring_rule_id,
+  }));
 
   return (
     <TransactionsClient
-      profile={profile}
-      incomes={incomes || []}
-      payments={transactions || []}
+      profile={snapshot.profile}
+      incomes={incomes}
+      payments={payments}
       subscriptions={subscriptions}
-      isPro={isPro}
-      currency={currency}
+      isPro={snapshot.profile.billing_tier === "pro"}
+      currency={snapshot.profile.base_currency}
     />
   );
 }
