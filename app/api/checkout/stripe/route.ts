@@ -5,12 +5,14 @@ import { createClient } from "@/utils/supabase/server";
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const simulated = searchParams.get("simulated") === "true";
+  const nextPath = searchParams.get("next") || "/dashboard";
 
   const stripeKey = process.env.STRIPE_SECRET_KEY;
 
   // Fallback to simulated checkout if forced or if Stripe keys are missing
   if (simulated || !stripeKey) {
     const checkoutUrl = new URL("/checkout", request.url);
+    checkoutUrl.searchParams.set("next", nextPath);
     return NextResponse.redirect(checkoutUrl);
   }
 
@@ -77,7 +79,7 @@ export async function GET(request: NextRequest) {
         },
       ],
       mode: "subscription",
-      success_url: `${request.nextUrl.origin}/dashboard?upgrade=success`,
+      success_url: `${request.nextUrl.origin}${nextPath}?upgrade=success`,
       cancel_url: `${request.nextUrl.origin}/dashboard?upgrade=cancel`,
     });
 

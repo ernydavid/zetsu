@@ -2,14 +2,19 @@
 
 import * as React from "react";
 import Link from "next/link";
+import { AnimatedModal } from "@/components/common/animated-modal";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
+import { Label } from "@/components/ui/label";
+import { FormSelect } from "@/components/ui/select";
+import { AppLogo } from "@/components/common/app-logo";
 import { ThemeToggle } from "@/components/common/theme-toggle";
 import { Sidebar } from "@/components/common/sidebar";
 import { signout } from "@/app/auth/actions";
 import { sileo } from "sileo";
 import {
+  linkTransactionToDebt,
   deleteIncome,
   togglePaymentStatus,
   deletePayment,
@@ -33,6 +38,7 @@ import {
   IconLock,
   IconMenu2,
   IconCreditCard,
+  IconLink,
 } from "@tabler/icons-react";
 
 interface TransactionsClientProps {
@@ -40,8 +46,10 @@ interface TransactionsClientProps {
   incomes: any[];
   payments: any[];
   subscriptions: any[];
+  debtObligations: any[];
   isPro: boolean;
   currency: string;
+  errorMsg?: string;
 }
 
 export function TransactionsClient({
@@ -49,8 +57,10 @@ export function TransactionsClient({
   incomes = [],
   payments = [],
   subscriptions = [],
+  debtObligations = [],
   isPro,
   currency,
+  errorMsg,
 }: TransactionsClientProps) {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
   const [isPending, startTransition] = React.useTransition();
@@ -72,6 +82,7 @@ export function TransactionsClient({
     type: "income" | "payment" | "subscription";
     action: () => Promise<void>;
   } | null>(null);
+  const [linkTargetId, setLinkTargetId] = React.useState<string | null>(null);
 
 
 
@@ -128,15 +139,19 @@ export function TransactionsClient({
         title: tx.title,
         type,
         amount: Number(tx.amount), // positive for income, negative for expenses/subscriptions
+        origin: tx.origin || "manual",
         date: new Date(tx.date || tx.created_at || Date.now()),
         displayDate: tx.date ? new Date(tx.date) : new Date(tx.created_at || Date.now()),
         category,
         status: tx.status,
         action,
         raw: rawSub, // for editing/viewing subscription template if needed
+        debtAllocation: tx.debt_allocation ?? null,
       };
     });
   }, [payments, subscriptions]);
+
+  const linkTarget = allTransactions.find((tx) => tx.id === linkTargetId) ?? null;
 
   // Filter & Search & Sort
   const filteredAndSorted = React.useMemo(() => {
@@ -182,9 +197,7 @@ export function TransactionsClient({
       {/* 2. MOBILE HEADER & NAVIGATION */}
       <header className="lg:hidden border-b border-premium bg-card px-6 py-4 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center space-x-2">
-          <span className="font-heading-style text-xl font-black tracking-tighter">
-            zetsu<span className="text-accent-soft-fg font-serif">.</span>
-          </span>
+          <AppLogo size="sm" variant="full" priority />
           <span className="text-[9px] font-mono px-2 py-0.2 border border-accent-soft-border rounded-full bg-accent-soft-bg text-accent-soft-fg uppercase font-bold">
             {profile.billing_tier}
           </span>
@@ -206,7 +219,7 @@ export function TransactionsClient({
       {isMobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex flex-col p-6 animate-fade-in">
           <div className="flex justify-between items-center mb-8">
-            <span className="font-heading-style text-xl font-black tracking-tighter">zetsu.</span>
+            <AppLogo size="sm" variant="full" />
             <Button size="icon-sm" variant="outline" onClick={() => setIsMobileMenuOpen(false)}>
               <IconX className="size-4" />
             </Button>
@@ -267,10 +280,32 @@ export function TransactionsClient({
             <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider font-bold">
               /registro_financiero
             </span>
-            <h1 className="font-heading-style text-3xl font-black tracking-tight text-foreground lowercase">
+            <h1 className="font-heading-style text-3xl font-black tracking-tight text-accent-soft-fg lowercase">
               historial de transacciones
             </h1>
           </div>
+
+          {errorMsg ? (
+            <div className="rounded-xl border border-destructive/30 bg-destructive/5 px-4 py-3 text-xs font-mono text-destructive">
+              {decodeURIComponent(errorMsg)}
+            </div>
+          ) : null}
+
+          {debtObligations.length > 0 ? (
+            <Card className="flex flex-col gap-3 border border-accent-soft-border bg-accent-soft-bg px-4 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="space-y-1 font-mono">
+                <p className="text-[10px] font-bold uppercase tracking-[0.22em] text-accent-soft-fg/80">
+                  vinculación de deuda
+                </p>
+                <p className="text-xs text-accent-soft-fg">
+                  Ahora puedes asociar un gasto a una deuda directamente desde cada movimiento.
+                </p>
+              </div>
+              <span className="rounded-full border border-accent-soft-border/70 px-2.5 py-1 text-[10px] font-mono uppercase text-accent-soft-fg">
+                {debtObligations.length} deudas disponibles
+              </span>
+            </Card>
+          ) : null}
 
           {/* Filters, Search & Sorting Panel */}
           <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
@@ -380,9 +415,17 @@ export function TransactionsClient({
                             {tx.type === "income" ? "ingreso" : tx.type === "subscription" ? "suscripción" : "gasto"}
                           </span>
                           <span className="text-[8px] text-muted-foreground font-mono uppercase">
-                            • {tx.category} • {formatDate(tx.displayDate)}
+                            • {tx.category} • {formatDate(tx.displayDate)} • {tx.origin === "synced" ? "sync" : "manual"}
                           </span>
                         </div>
+                        {tx.debtAllocation ? (
+                          <div className="mt-1">
+                            <span className="inline-flex items-center gap-1 rounded-md border border-accent-soft-border bg-accent-soft-bg px-1.5 py-0.5 text-[8px] font-mono uppercase text-accent-soft-fg">
+                              <IconLink className="size-2.5" />
+                              deuda · {tx.debtAllocation.debt_name ?? "vinculada"}
+                            </span>
+                          </div>
+                        ) : null}
                       </div>
                     </div>
 
@@ -394,7 +437,7 @@ export function TransactionsClient({
                         {formatMoney(Math.abs(tx.amount))}
                       </span>
 
-                      {(tx.type === "payment" || tx.type === "subscription") && (
+                      {(tx.type === "payment" || tx.type === "subscription") && tx.origin !== "synced" && (
                         <button
                           type="button"
                           onClick={() => {
@@ -433,21 +476,38 @@ export function TransactionsClient({
                         </button>
                       )}
 
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setDeleteTarget({
-                            title: tx.title,
-                            type: tx.type,
-                            action: tx.action,
-                          });
-                        }}
-                        className="text-muted-foreground hover:text-destructive p-1 transition-colors cursor-pointer"
-                        aria-label="Eliminar"
-                        disabled={isPending}
-                      >
-                        <IconTrash className="size-3.5" />
-                      </button>
+                      {tx.amount < 0 && debtObligations.length > 0 ? (
+                        <button
+                          type="button"
+                          onClick={() => setLinkTargetId(tx.id)}
+                          className="inline-flex items-center gap-1 rounded-md border border-premium px-2 py-1 text-[9px] font-mono uppercase text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                          <IconCreditCard className="size-3" />
+                          {tx.debtAllocation ? "editar deuda" : "vincular deuda"}
+                        </button>
+                      ) : null}
+
+                      {tx.origin !== "synced" ? (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setDeleteTarget({
+                              title: tx.title,
+                              type: tx.type,
+                              action: tx.action,
+                            });
+                          }}
+                          className="text-muted-foreground hover:text-destructive p-1 transition-colors cursor-pointer"
+                          aria-label="Eliminar"
+                          disabled={isPending}
+                        >
+                          <IconTrash className="size-3.5" />
+                        </button>
+                      ) : (
+                        <span className="text-[9px] font-mono text-muted-foreground uppercase">
+                          solo lectura
+                        </span>
+                      )}
                     </div>
                   </div>
                 ))
@@ -506,8 +566,12 @@ export function TransactionsClient({
 
       {/* Delete Confirmation Modal */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-md animate-fade-in px-4">
-          <Card className="max-w-sm w-full bg-card border border-premium shadow-premium-lg relative animate-scale-up">
+        <AnimatedModal
+          open={!!deleteTarget}
+          overlayClassName="flex items-center justify-center bg-background/80 backdrop-blur-md px-4"
+          panelClassName="max-w-sm w-full"
+        >
+          <Card className="max-w-sm w-full bg-card border border-premium shadow-premium-lg relative">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-heading-style text-sm font-bold tracking-tight text-foreground lowercase flex items-center gap-1.5">
                 <IconAlertCircle className="size-4 text-destructive" />
@@ -570,7 +634,104 @@ export function TransactionsClient({
               </div>
             </div>
           </Card>
-        </div>
-      )}    </div>
+        </AnimatedModal>
+      )}
+
+      {linkTarget ? (
+        <AnimatedModal
+          open={!!linkTarget}
+          overlayClassName="flex items-end justify-center bg-background/80 px-4 py-4 backdrop-blur-md sm:items-center"
+          panelClassName="relative w-full max-w-lg"
+        >
+          <Card className="relative w-full max-w-lg space-y-4 border border-premium bg-card p-5 shadow-premium-lg">
+            <div className="flex items-start justify-between gap-4">
+              <div className="space-y-1">
+                <p className="text-[10px] font-mono font-bold uppercase tracking-[0.22em] text-muted-foreground">
+                  /vincular_a_deuda
+                </p>
+                <p className="text-[11px] font-mono leading-relaxed text-muted-foreground">
+                  Asocia este gasto con una deuda para reflejar cuánto se fue a capital, interés o comisiones.
+                </p>
+              </div>
+              <Button type="button" size="icon-sm" variant="outline" onClick={() => setLinkTargetId(null)}>
+                <IconX className="size-4" />
+              </Button>
+            </div>
+
+            <div className="rounded-xl border border-premium bg-muted/10 px-3 py-3 font-mono text-xs">
+              <p className="font-bold text-foreground">{linkTarget.title}</p>
+              <p className="mt-1 text-[10px] text-muted-foreground">
+                {formatDate(linkTarget.displayDate)} · {formatMoney(Math.abs(linkTarget.amount))} · {linkTarget.category}
+              </p>
+            </div>
+
+            <form action={linkTransactionToDebt} className="grid grid-cols-1 gap-3 font-mono text-xs sm:grid-cols-2">
+              <input type="hidden" name="redirect_to" value="/dashboard/transactions" />
+              <input type="hidden" name="transaction_id" value={linkTarget.id} />
+              <div className="space-y-1 sm:col-span-2">
+                <Label htmlFor="link-debt">Deuda</Label>
+                <FormSelect
+                  id="link-debt"
+                  name="debt_id"
+                  defaultValue={linkTarget.debtAllocation?.debt_obligation_id ?? debtObligations[0]?.id ?? ""}
+                  options={debtObligations.map((debt) => ({
+                    value: debt.id,
+                    label: debt.name,
+                  }))}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="link-principal">Capital</Label>
+                <Input
+                  id="link-principal"
+                  name="principal_amount"
+                  type="number"
+                  step="0.01"
+                  defaultValue={linkTarget.debtAllocation?.principal_amount ?? Math.abs(linkTarget.amount)}
+                  required
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="link-interest">Interés</Label>
+                <Input
+                  id="link-interest"
+                  name="interest_amount"
+                  type="number"
+                  step="0.01"
+                  defaultValue={linkTarget.debtAllocation?.interest_amount ?? 0}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="link-fee">Comisión</Label>
+                <Input
+                  id="link-fee"
+                  name="fee_amount"
+                  type="number"
+                  step="0.01"
+                  defaultValue={linkTarget.debtAllocation?.fee_amount ?? 0}
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="link-notes">Notas</Label>
+                <Input
+                  id="link-notes"
+                  name="notes"
+                  defaultValue={linkTarget.debtAllocation?.notes ?? ""}
+                  placeholder="Detalle opcional"
+                />
+              </div>
+              <div className="flex gap-2 pt-2 sm:col-span-2">
+                <Button type="button" variant="outline" className="flex-1 justify-center" onClick={() => setLinkTargetId(null)}>
+                  cancelar
+                </Button>
+                <Button type="submit" variant="soft" className="flex-1 justify-center">
+                  guardar vínculo
+                </Button>
+              </div>
+            </form>
+          </Card>
+        </AnimatedModal>
+      ) : null}
+    </div>
   );
 }

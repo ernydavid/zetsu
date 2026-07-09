@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import { SubscriptionsClient } from "./subscriptions-client";
+import { buildCategoryLibrary } from "@/lib/finance/recurring";
 import { getFinanceSnapshot } from "@/lib/finance/service";
 
 export default async function SubscriptionsPage() {
@@ -35,11 +36,17 @@ export default async function SubscriptionsPage() {
       next_payment_date: rule.next_occurrence,
       category: rule.category_id ? categoryMap.get(rule.category_id) ?? "otros" : "otros",
     }));
+  const expenseCategoryLibrary = buildCategoryLibrary(
+    snapshot.categories
+      .filter((category) => category.kind === "expense")
+      .map((category) => category.name),
+  );
 
   return (
     <SubscriptionsClient
       profile={snapshot.profile}
       subscriptions={subscriptions}
+      expenseCategoryLibrary={expenseCategoryLibrary}
       isPro={snapshot.profile.billing_tier === "pro"}
       currency={snapshot.profile.base_currency}
     />

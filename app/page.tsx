@@ -1,16 +1,16 @@
 import * as React from "react";
 import Link from "next/link";
+import { AppLogo } from "@/components/common/app-logo";
+import { LandingInteractiveDemo } from "@/components/common/landing-interactive-demo";
 import { ThemeToggle } from "@/components/common/theme-toggle";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardDescription, CardTitle } from "@/components/ui/card";
+import { Card, CardDescription, CardTitle } from "@/components/ui/card";
 import {
   IconArrowRight,
   IconChartBar,
   IconCoin,
-  IconAlertCircle,
   IconCreditCard,
   IconCircleCheck,
-  IconDashboard,
 } from "@tabler/icons-react";
 
 export default function Home() {
@@ -22,9 +22,9 @@ export default function Home() {
           <div className="flex items-center space-x-8">
             <Link
               href="/"
-              className="font-heading-style text-2xl font-black tracking-tighter hover:opacity-80 transition-opacity"
+              className="hover:opacity-80 transition-opacity"
             >
-              zetsu<span className="text-primary font-serif">.</span>
+              <AppLogo size="md" variant="full" priority />
             </Link>
             <nav className="hidden md:flex space-x-6 text-xs font-mono uppercase tracking-wider text-muted-foreground">
               <a href="#features" className="hover:text-foreground transition-colors">
@@ -51,7 +51,7 @@ export default function Home() {
       </header>
 
       {/* Hero Section */}
-      <section className="py-20 md:py-32 max-w-7xl mx-auto px-6 flex flex-col md:flex-row items-center gap-12 md:gap-20">
+      <section className="max-w-7xl mx-auto px-6 py-16 md:min-h-[calc(100vh-4rem)] md:py-12 flex flex-col md:flex-row items-center gap-10 md:gap-16">
         <div className="flex-1 space-y-6 text-left">
           <h1 className="font-heading-style text-5xl md:text-7xl font-black tracking-tighter leading-[0.9] lowercase">
             toma el control absoluto de tus <span className="underline decoration-wavy decoration-muted-foreground underline-offset-8">finanzas.</span>
@@ -74,76 +74,8 @@ export default function Home() {
         </div>
 
         {/* Hero Visual Mockup */}
-        <div className="flex-1 w-full" id="demo">
-          <Card className="w-full bg-background overflow-hidden p-0! shadow-premium-lg">
-            {/* Mock Dashboard Window Header */}
-            <div className="border-b border-premium p-4 flex items-center justify-between bg-muted/20 font-mono text-xs">
-              <div className="flex space-x-2">
-                <div className="size-3 border border-foreground bg-foreground"></div>
-                <div className="size-3 border border-foreground"></div>
-                <div className="size-3 border border-foreground bg-muted"></div>
-              </div>
-              <span>zetsu_dashboard_preview.exe</span>
-            </div>
-
-            <div className="p-6 md:p-8 space-y-8">
-              {/* Financial Snapshot */}
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 border-b border-dashed border-border pb-8">
-                <div className="space-y-1">
-                  <p className="text-xs uppercase font-mono text-muted-foreground font-bold tracking-wider">
-                    ingresos mensuales
-                  </p>
-                  <p className="text-3xl font-mono font-bold tracking-tighter">
-                    $5,200.00
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs uppercase font-mono text-muted-foreground font-bold tracking-wider">
-                    suscripciones
-                  </p>
-                  <p className="text-3xl font-mono font-bold tracking-tighter text-destructive">
-                    -$145.00
-                  </p>
-                </div>
-                <div className="space-y-1">
-                  <p className="text-xs uppercase font-mono text-muted-foreground font-bold tracking-wider">
-                    saldo neto
-                  </p>
-                  <p className="text-3xl font-mono font-bold tracking-tighter text-emerald-600 dark:text-emerald-400">
-                    $5,055.00
-                  </p>
-                </div>
-              </div>
-
-              {/* Transaction List Preview */}
-              <div className="space-y-4">
-                <div className="flex justify-between items-center">
-                  <h4 className="font-heading-style font-black text-lg lowercase">/flujos de este mes</h4>
-                  <span className="text-xs font-mono text-muted-foreground">[3 items]</span>
-                </div>
-                <div className="space-y-2 font-mono text-sm">
-                  <div className="flex justify-between p-3 rounded-xl border border-premium bg-muted/10">
-                    <span className="flex items-center gap-2">
-                      <span className="size-2 bg-emerald-500 rounded-full"></span> nomina_principal
-                    </span>
-                    <span>+$4,000.00</span>
-                  </div>
-                  <div className="flex justify-between p-3 rounded-xl border border-premium bg-muted/10">
-                    <span className="flex items-center gap-2">
-                      <span className="size-2 bg-emerald-500 rounded-full"></span> desarrollo_freelance
-                    </span>
-                    <span>+$1,200.00</span>
-                  </div>
-                  <div className="flex justify-between p-3 rounded-xl border border-destructive/20 bg-destructive/5 text-destructive">
-                    <span className="flex items-center gap-2 font-bold">
-                      <span className="size-2 bg-destructive rounded-full"></span> netflix_premium
-                    </span>
-                    <span className="font-bold">-$15.99</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </Card>
+        <div className="flex flex-1 w-full justify-center md:justify-end" id="demo">
+          <LandingInteractiveDemo />
         </div>
       </section>
 
@@ -291,9 +223,12 @@ export default function Home() {
       {/* Footer */}
       <footer className="border-t border-premium bg-background mt-auto">
         <div className="max-w-7xl mx-auto px-6 py-12 flex flex-col md:flex-row items-center justify-between gap-6">
-          <p className="text-xs font-mono text-muted-foreground lowercase">
-            © 2026 zetsu. todos los derechos reservados.
-          </p>
+          <div className="flex items-center gap-3">
+            <AppLogo size="sm" variant="icon" />
+            <p className="text-xs font-mono text-muted-foreground lowercase">
+              © 2026 zetsu. todos los derechos reservados.
+            </p>
+          </div>
           <div className="flex space-x-6 text-[10px] font-mono uppercase tracking-wider text-muted-foreground">
             <Link href="/auth/login" className="hover:underline">
               /entrar

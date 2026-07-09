@@ -8,6 +8,7 @@ import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormSelect } from "@/components/ui/select";
 import { addAccount, addTransfer, reconcileAccount } from "@/app/dashboard/actions";
 import { computeAccountBalance } from "@/lib/finance/calculations";
 import { getFinanceSnapshot } from "@/lib/finance/service";
@@ -59,7 +60,7 @@ export default async function AccountsPage() {
               <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider font-bold">
                 /cuentas_y_conciliacion
               </span>
-              <h1 className="font-heading-style text-3xl font-black tracking-tight lowercase">
+              <h1 className="font-heading-style text-3xl font-black tracking-tight text-accent-soft-fg lowercase">
                 cuentas reales
               </h1>
               <p className="text-xs text-muted-foreground font-mono">
@@ -73,6 +74,8 @@ export default async function AccountsPage() {
             <Link href="/dashboard"><Button variant="outline" size="sm">dashboard</Button></Link>
             <Link href="/dashboard/transactions"><Button variant="outline" size="sm">transacciones</Button></Link>
             <Link href="/dashboard/budget"><Button variant="outline" size="sm">presupuesto</Button></Link>
+            <Link href="/dashboard/banking"><Button variant="outline" size="sm">banca</Button></Link>
+            <Link href="/dashboard/debts"><Button variant="outline" size="sm">deudas</Button></Link>
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -91,6 +94,7 @@ export default async function AccountsPage() {
                   <div className="text-[10px] font-mono text-muted-foreground space-y-1">
                     <p>saldo inicial: {formatMoney(Number(account.opening_balance), profile.base_currency)}</p>
                     <p>presupuestable: {account.include_in_budget ? "sí" : "no"}</p>
+                    <p>origen: {account.origin === "synced" ? `sync/${account.provider ?? "provider"}` : "manual"}</p>
                     <p>
                       última conciliación: {account.last_reconciled_at ?? "sin conciliar"}
                     </p>
@@ -116,18 +120,18 @@ export default async function AccountsPage() {
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="account-type">Tipo</Label>
-                    <select
+                    <FormSelect
                       id="account-type"
                       name="type"
-                      className="flex h-10 w-full bg-background px-3 py-2 text-sm rounded-xl border border-premium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground font-mono transition-colors appearance-none cursor-pointer"
                       defaultValue="checking"
-                    >
-                      <option value="checking">checking</option>
-                      <option value="savings">savings</option>
-                      <option value="cash">cash</option>
-                      <option value="credit_card">credit card</option>
-                      <option value="loan">loan</option>
-                    </select>
+                      options={[
+                        { value: "checking", label: "checking" },
+                        { value: "savings", label: "savings" },
+                        { value: "cash", label: "cash" },
+                        { value: "credit_card", label: "credit card" },
+                        { value: "loan", label: "loan" },
+                      ]}
+                    />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="opening-balance">Saldo inicial</Label>
@@ -155,19 +159,27 @@ export default async function AccountsPage() {
                 <form action={addTransfer} className="space-y-3 font-mono text-xs">
                   <div className="space-y-1">
                     <Label htmlFor="from-account">Desde</Label>
-                    <select id="from-account" name="from_account_id" className="flex h-10 w-full bg-background px-3 py-2 text-sm rounded-xl border border-premium font-mono">
-                      {snapshot.accounts.map((account) => (
-                        <option key={account.id} value={account.id}>{account.name}</option>
-                      ))}
-                    </select>
+                    <FormSelect
+                      id="from-account"
+                      name="from_account_id"
+                      defaultValue={snapshot.accounts[0]?.id}
+                      options={snapshot.accounts.map((account) => ({
+                        value: account.id,
+                        label: account.name,
+                      }))}
+                    />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="to-account">Hacia</Label>
-                    <select id="to-account" name="to_account_id" className="flex h-10 w-full bg-background px-3 py-2 text-sm rounded-xl border border-premium font-mono">
-                      {snapshot.accounts.map((account) => (
-                        <option key={account.id} value={account.id}>{account.name}</option>
-                      ))}
-                    </select>
+                    <FormSelect
+                      id="to-account"
+                      name="to_account_id"
+                      defaultValue={snapshot.accounts[0]?.id}
+                      options={snapshot.accounts.map((account) => ({
+                        value: account.id,
+                        label: account.name,
+                      }))}
+                    />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="transfer-amount">Monto</Label>
@@ -199,11 +211,15 @@ export default async function AccountsPage() {
                 <form action={reconcileAccount} className="space-y-3 font-mono text-xs">
                   <div className="space-y-1">
                     <Label htmlFor="reconcile-account">Cuenta</Label>
-                    <select id="reconcile-account" name="account_id" className="flex h-10 w-full bg-background px-3 py-2 text-sm rounded-xl border border-premium font-mono">
-                      {snapshot.accounts.map((account) => (
-                        <option key={account.id} value={account.id}>{account.name}</option>
-                      ))}
-                    </select>
+                    <FormSelect
+                      id="reconcile-account"
+                      name="account_id"
+                      defaultValue={snapshot.accounts[0]?.id}
+                      options={snapshot.accounts.map((account) => ({
+                        value: account.id,
+                        label: account.name,
+                      }))}
+                    />
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="statement-date">Fecha de corte</Label>

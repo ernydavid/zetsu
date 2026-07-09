@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useActionState } from "react";
 import { signup } from "@/app/auth/actions";
+import { AppLogo } from "@/components/common/app-logo";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -25,9 +26,9 @@ export default function SignupPage() {
         <div className="space-y-2">
           <Link
             href="/"
-            className="font-heading-style text-4xl font-black tracking-tighter hover:opacity-80 transition-opacity block"
+            className="hover:opacity-80 transition-opacity inline-flex"
           >
-            zetsu<span className="text-primary font-serif">.</span>
+            <AppLogo size="lg" variant="full" priority />
           </Link>
           <p className="text-sm font-mono text-muted-foreground uppercase tracking-wider">
             Crea una cuenta para empezar tu onboarding

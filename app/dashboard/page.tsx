@@ -5,7 +5,9 @@ import { createClient } from "@/utils/supabase/server";
 import { DashboardClient } from "@/app/dashboard/dashboard-client";
 import {
   computeAvailableBalance,
+  computeAvailableAfterDebtMinimums,
   computeAvailableToBudget,
+  computeDebtTotals,
   computeBudgetRows,
   computeNetWorth,
   computePeriodTotals,
@@ -13,6 +15,7 @@ import {
   computeRunwayDays,
 } from "@/lib/finance/calculations";
 import { monthEndIso, monthStartIso } from "@/lib/finance/dates";
+import { buildCategoryLibrary, getRecurringRuleScheduleDays } from "@/lib/finance/recurring";
 import { ensureFinanceSetup, getFinanceSnapshot } from "@/lib/finance/service";
 
 interface PageProps {
@@ -26,6 +29,7 @@ function mapRecurringIncome(rule: any) {
     amount: Number(rule.amount),
     frequency: rule.cadence,
     next_pay_date: rule.next_occurrence,
+    schedule_days: getRecurringRuleScheduleDays(rule),
   };
 }
 
@@ -49,12 +53,15 @@ function mapTransaction(tx: any, categoryName: string | null) {
     id: tx.id,
     title: tx.title,
     amount: signedAmount,
+    origin: tx.origin,
     date: tx.transaction_date,
     created_at: tx.created_at,
     category: categoryName ?? "otros",
     status: isPaid ? "paid" : "unpaid",
     source_type:
-      tx.kind === "income"
+      tx.origin === "synced"
+        ? "synced_transaction"
+        : tx.kind === "income"
         ? tx.recurring_rule_id
           ? "income_recurring"
           : "manual_income"
@@ -71,6 +78,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const params = await searchParams;
   const errorMsg = typeof params.error === "string" ? params.error : undefined;
   const upgradeMsg = typeof params.upgrade === "string" ? params.upgrade : undefined;
+  const startTour = params.tour === "1";
 
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
@@ -117,7 +125,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     snapshot.transactions,
     budgetRows,
   );
-  const projectedCashflow = computeProjectedCashflow(snapshot.transactions, 30);
+  const availableAfterDebtMinimums = computeAvailableAfterDebtMinimums(
+    snapshot.accounts,
+    snapshot.transactions,
+    snapshot.debtObligations,
+  );
+  const debtTotals = computeDebtTotals(snapshot.debtObligations);
+  const projectedCashflow = computeProjectedCashflow(snapshot.transactions, snapshot.recurringRules, 30);
   const runwayDays = computeRunwayDays(availableBalance, monthlyExpenses);
 
   const categoryMap = new Map(snapshot.categories.map((category) => [category.id, category.name]));
@@ -126,6 +140,11 @@ export default async function DashboardPage({ searchParams }: PageProps) {
   const expenseRules = snapshot.recurringRules.filter((rule) => rule.kind === "expense" && rule.active);
   const transformedTransactions = snapshot.transactions.map((tx) =>
     mapTransaction(tx, tx.category_id ? categoryMap.get(tx.category_id) ?? null : null),
+  );
+  const expenseCategoryLibrary = buildCategoryLibrary(
+    snapshot.categories
+      .filter((category) => category.kind === "expense")
+      .map((category) => category.name),
   );
 
   return (
@@ -136,6 +155,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       subscriptions={expenseRules.map((rule) =>
         mapRecurringExpense(rule, rule.category_id ? categoryMap.get(rule.category_id) ?? "otros" : "otros"),
       )}
+      expenseCategoryLibrary={expenseCategoryLibrary}
       isPro={snapshot.profile.billing_tier === "pro"}
       currency={snapshot.profile.base_currency}
       availableBalance={availableBalance}
@@ -143,10 +163,14 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       monthlyIncome={monthlyIncome}
       monthlyExpenses={monthlyExpenses}
       availableToBudget={availableToBudget}
+      availableAfterDebtMinimums={availableAfterDebtMinimums}
+      totalDebtOutstanding={debtTotals.outstanding}
+      debtMinimums={debtTotals.minimums}
       projectedCashflow={projectedCashflow}
       runwayDays={runwayDays}
       errorMsg={errorMsg}
       upgradeMsg={upgradeMsg}
+      startTour={startTour}
     />
   );
 }

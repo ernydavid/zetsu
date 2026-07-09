@@ -4,6 +4,7 @@ import * as React from "react";
 import Link from "next/link";
 import { useTheme } from "next-themes";
 import { signout } from "@/app/auth/actions";
+import { AppLogo } from "@/components/common/app-logo";
 import {
   IconHome,
   IconReceipt,
@@ -17,15 +18,17 @@ import {
   IconPalette,
   IconSun,
   IconMoon,
+  IconWallet,
 } from "@tabler/icons-react";
 
 interface SidebarProps {
-  activeTab: "dashboard" | "transactions" | "subscriptions" | "accounts" | "budget" | "settings";
+  activeTab: "dashboard" | "transactions" | "subscriptions" | "accounts" | "budget" | "banking" | "debts" | "settings";
   profile: any;
   currency: string;
+  dashboardRef?: React.Ref<HTMLAnchorElement>;
 }
 
-export function Sidebar({ activeTab, profile, currency }: SidebarProps) {
+export function Sidebar({ activeTab, profile, currency, dashboardRef }: SidebarProps) {
   const [isMenuOpen, setIsMenuOpen] = React.useState(false);
   const menuRef = React.useRef<HTMLDivElement>(null);
   const { theme, setTheme } = useTheme();
@@ -54,9 +57,7 @@ export function Sidebar({ activeTab, profile, currency }: SidebarProps) {
       <aside className="hidden lg:flex fixed inset-y-0 left-0 z-30 w-64 border-r border-premium bg-card flex-col justify-between overflow-y-auto">
         <div className="p-8 space-y-8">
           <div className="flex items-center space-x-3">
-            <span className="font-heading-style text-2xl font-black tracking-tighter">
-              zetsu<span className="text-accent-soft-fg font-serif">.</span>
-            </span>
+            <AppLogo size="md" variant="full" priority />
             <span className="text-[10px] font-mono px-2 py-0.5 border border-accent-soft-border rounded-full bg-accent-soft-bg text-accent-soft-fg uppercase font-bold tracking-wider">
               {profile.billing_tier}
             </span>
@@ -64,6 +65,7 @@ export function Sidebar({ activeTab, profile, currency }: SidebarProps) {
 
           <nav className="space-y-2">
             <Link
+              ref={dashboardRef}
               href="/dashboard"
               className={`flex items-center space-x-3 px-4 py-3 rounded-xl border text-sm transition-all duration-200 ${
                 activeTab === "dashboard"
@@ -106,20 +108,6 @@ export function Sidebar({ activeTab, profile, currency }: SidebarProps) {
             </Link>
 
             <Link
-              href="/dashboard/accounts"
-              className={`flex items-center space-x-3 px-4 py-3 rounded-xl border text-sm transition-all duration-200 ${
-                activeTab === "accounts"
-                  ? "bg-accent-soft-bg text-accent-soft-fg border-accent-soft-border font-medium"
-                  : "border-transparent text-muted-foreground hover:bg-muted/10"
-              }`}
-            >
-              <IconReceipt className="size-4" />
-              <span className="font-mono uppercase tracking-wider text-xs">
-                cuentas
-              </span>
-            </Link>
-
-            <Link
               href="/dashboard/budget"
               className={`flex items-center space-x-3 px-4 py-3 rounded-xl border text-sm transition-all duration-200 ${
                 activeTab === "budget"
@@ -130,6 +118,20 @@ export function Sidebar({ activeTab, profile, currency }: SidebarProps) {
               <IconChartBar className="size-4" />
               <span className="font-mono uppercase tracking-wider text-xs">
                 presupuesto
+              </span>
+            </Link>
+
+            <Link
+              href="/dashboard/debts"
+              className={`flex items-center space-x-3 px-4 py-3 rounded-xl border text-sm transition-all duration-200 ${
+                activeTab === "debts"
+                  ? "bg-accent-soft-bg text-accent-soft-fg border-accent-soft-border font-medium"
+                  : "border-transparent text-muted-foreground hover:bg-muted/10"
+              }`}
+            >
+              <IconWallet className="size-4" />
+              <span className="font-mono uppercase tracking-wider text-xs">
+                deudas
               </span>
             </Link>
 

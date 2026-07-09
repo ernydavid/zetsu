@@ -5,10 +5,14 @@ import {
   toIsoDate,
   todayIso,
 } from "@/lib/finance/dates";
+import { getDebtMonthlyCommitment } from "@/lib/finance/debt-utils";
+import { collectRecurringOccurrencesInRange } from "@/lib/finance/recurring";
 import type {
+  DebtObligation,
   FinanceAccount,
   FinanceBudgetCategoryMonth,
   FinanceCategory,
+  FinanceRecurringRule,
   FinanceTransaction,
   TransactionStatus,
 } from "@/lib/finance/types";
@@ -114,13 +118,36 @@ export function computeUpcomingTransactions(
 
 export function computeProjectedCashflow(
   transactions: FinanceTransaction[],
+  recurringRules: FinanceRecurringRule[] = [],
   horizonDays = 30,
 ) {
-  return computeUpcomingTransactions(transactions, horizonDays).reduce((total, tx) => {
+  const fromTransactions = computeUpcomingTransactions(transactions, horizonDays).reduce((total, tx) => {
     if (tx.kind === "income") return total + asNumber(tx.amount);
     if (tx.kind === "expense") return total - asNumber(tx.amount);
     return total;
   }, 0);
+
+  const today = parseIsoDate(todayIso());
+  const end = new Date(today);
+  end.setUTCDate(end.getUTCDate() + horizonDays);
+  const endIso = toIsoDate(end);
+
+  const fromRecurringRules = recurringRules
+    .filter((rule) => rule.active && !rule.archived_at)
+    .reduce((total, rule) => {
+      const occurrences = collectRecurringOccurrencesInRange(
+        rule,
+        rule.next_occurrence || todayIso(),
+        endIso,
+      );
+
+      const amount = asNumber(rule.amount) * occurrences.length;
+      if (rule.kind === "income") return total + amount;
+      if (rule.kind === "expense") return total - amount;
+      return total;
+    }, 0);
+
+  return fromTransactions + fromRecurringRules;
 }
 
 export function computeRunwayDays(availableBalance: number, monthlyExpenses: number) {
@@ -173,4 +200,30 @@ export function computeAvailableToBudget(
   const onBudgetCash = computeAvailableBalance(accounts, transactions);
   const assigned = budgetRows.reduce((total, row) => total + row.assigned, 0);
   return onBudgetCash - assigned;
+}
+
+export function computeAvailableAfterDebtMinimums(
+  accounts: FinanceAccount[],
+  transactions: FinanceTransaction[],
+  debts: DebtObligation[],
+) {
+  const onBudgetCash = computeAvailableBalance(accounts, transactions);
+  const minimums = debts
+    .filter((debt) => debt.status === "active")
+    .reduce((total, debt) => total + getDebtMonthlyCommitment(debt), 0);
+  return onBudgetCash - minimums;
+}
+
+export function computeDebtTotals(debts: DebtObligation[]) {
+  return debts
+    .filter((debt) => debt.status === "active" || debt.status === "paused")
+    .reduce(
+      (summary, debt) => {
+        summary.outstanding += asNumber(debt.current_balance);
+        summary.minimums += getDebtMonthlyCommitment(debt);
+        summary.targets += asNumber(debt.payment_target);
+        return summary;
+      },
+      { outstanding: 0, minimums: 0, targets: 0 },
+    );
 }

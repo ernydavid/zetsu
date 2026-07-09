@@ -7,6 +7,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { AppLogo } from "@/components/common/app-logo";
+import { AnimatedModal } from "@/components/common/animated-modal";
 import { ThemeToggle } from "@/components/common/theme-toggle";
 import { Sidebar } from "@/components/common/sidebar";
 import { useAccentTheme, AccentTheme } from "@/components/common/theme-context";
@@ -36,6 +39,7 @@ import {
   IconSparkles,
   IconPhoto,
   IconCheck,
+  IconRoute,
 } from "@tabler/icons-react";
 
 interface SettingsClientProps {
@@ -73,7 +77,6 @@ export function SettingsClient({
 
   // Deletion process states
   const [showConfirmDelete, setShowConfirmDelete] = React.useState(false);
-  const [showConfigureAgain, setShowConfigureAgain] = React.useState(false);
 
   // 2FA mock state
   const [is2FAEnabled, setIs2FAEnabled] = React.useState(false);
@@ -149,7 +152,6 @@ export function SettingsClient({
       try {
         await clearAllUserDataAction(configureAgain);
         sileo.success({ title: "Todos tus datos han sido borrados" });
-        setShowConfigureAgain(false);
         if (configureAgain) {
           router.push("/onboarding");
         } else {
@@ -172,9 +174,7 @@ export function SettingsClient({
       {/* 2. MOBILE HEADER & NAVIGATION */}
       <header className="lg:hidden border-b border-premium bg-card px-6 py-4 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center space-x-2">
-          <span className="font-heading-style text-xl font-black tracking-tighter">
-            zetsu<span className="text-accent-soft-fg font-serif">.</span>
-          </span>
+          <AppLogo size="sm" variant="full" priority />
           <span className="text-[9px] font-mono px-2 py-0.2 border border-accent-soft-border rounded-full bg-accent-soft-bg text-accent-soft-fg uppercase font-bold">
             {profile.billing_tier}
           </span>
@@ -196,7 +196,7 @@ export function SettingsClient({
       {isMobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex flex-col p-6 animate-fade-in">
           <div className="flex justify-between items-center mb-8">
-            <span className="font-heading-style text-xl font-black tracking-tighter">zetsu.</span>
+            <AppLogo size="sm" variant="full" />
             <Button size="icon-sm" variant="outline" onClick={() => setIsMobileMenuOpen(false)}>
               <IconX className="size-4" />
             </Button>
@@ -270,7 +270,7 @@ export function SettingsClient({
             <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider font-bold">
               /panel_de_control
             </span>
-            <h1 className="font-heading-style text-3xl font-black tracking-tight text-foreground lowercase">
+            <h1 className="font-heading-style text-3xl font-black tracking-tight text-accent-soft-fg lowercase">
               ajustes y configuración
             </h1>
           </div>
@@ -441,6 +441,22 @@ export function SettingsClient({
                           );
                         })}
                       </div>
+
+                      <div className="rounded-2xl border border-premium bg-background p-4 space-y-3">
+                        <div className="space-y-1">
+                          <h3 className="text-sm font-bold lowercase">/recorrido_inicial</h3>
+                          <p className="text-[10px] text-muted-foreground leading-relaxed">
+                            Puedes volver a abrir la guía contextual del dashboard cuando quieras.
+                          </p>
+                        </div>
+
+                        <Link href="/dashboard?tour=1">
+                          <Button variant="outline" size="sm" className="gap-1.5">
+                            <IconRoute className="size-3.5" />
+                            iniciar recorrido
+                          </Button>
+                        </Link>
+                      </div>
                     </div>
                   )}
 
@@ -494,24 +510,16 @@ export function SettingsClient({
                               Añade una capa extra de seguridad a tu cuenta solicitando un código de autenticación TOTP de tu dispositivo móvil al iniciar sesión.
                             </p>
                           </div>
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setIs2FAEnabled(!is2FAEnabled);
+                          <Switch
+                            checked={is2FAEnabled}
+                            onCheckedChange={(checked) => {
+                              setIs2FAEnabled(checked);
                               sileo.success({
-                                title: is2FAEnabled ? "2FA simulado desactivado" : "2FA simulado activado con éxito",
+                                title: checked ? "2FA simulado activado con éxito" : "2FA simulado desactivado",
                               });
                             }}
-                            className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                              is2FAEnabled ? "bg-accent-soft-fg" : "bg-muted"
-                            }`}
-                          >
-                            <span
-                              className={`pointer-events-none inline-block size-4 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out ${
-                                is2FAEnabled ? "translate-x-4" : "translate-x-0"
-                              }`}
-                            />
-                          </button>
+                            aria-label="Alternar autenticación de doble factor"
+                          />
                         </div>
 
                         {is2FAEnabled && (
@@ -549,7 +557,7 @@ export function SettingsClient({
                       <div className="space-y-1">
                         <h3 className="text-sm font-bold text-destructive lowercase">/borrar_toda_la_informacion</h3>
                         <p className="text-[10px] text-muted-foreground leading-relaxed">
-                          Esta acción es irreversible. Eliminará permanentemente todas tus transacciones registradas, plantillas de ingresos y cobros recurrentes de suscripciones de la base de datos.
+                          Esta acción es irreversible. Eliminará cuentas manuales, cuentas conectadas, deudas, movimientos, presupuesto, categorías y toda la data financiera del usuario, manteniendo solo el acceso de inicio de sesión.
                         </p>
                       </div>
 
@@ -575,8 +583,12 @@ export function SettingsClient({
 
       {/* MODAL 1: Confirm Delete Data */}
       {showConfirmDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-md animate-fade-in px-4">
-          <Card className="max-w-sm w-full bg-card border border-premium shadow-premium-lg relative animate-scale-up">
+        <AnimatedModal
+          open={showConfirmDelete}
+          overlayClassName="flex items-center justify-center bg-background/80 backdrop-blur-md px-4"
+          panelClassName="max-w-sm w-full"
+        >
+          <Card className="max-w-sm w-full bg-card border border-premium shadow-premium-lg relative">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-heading-style text-sm font-bold tracking-tight text-destructive lowercase flex items-center gap-1.5">
                 <IconAlertCircle className="size-4" />
@@ -612,63 +624,18 @@ export function SettingsClient({
                   type="button"
                   variant="destructive"
                   className="flex-1 justify-center py-2 gap-1.5"
-                  onClick={() => {
-                    setShowConfirmDelete(false);
-                    setShowConfigureAgain(true); // Open the configuration dialog modal
-                  }}
+                  onClick={() => handleClearDataConfirm(true)}
                   disabled={isPending}
                 >
+                  {isPending ? (
+                    <IconLoader2 className="size-3.5 animate-spin" />
+                  ) : null}
                   borrar todo
                 </Button>
               </div>
             </div>
           </Card>
-        </div>
-      )}
-
-      {/* MODAL 2: Configure Again Dialog */}
-      {showConfigureAgain && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-md animate-fade-in px-4">
-          <Card className="max-w-md w-full bg-card border border-premium shadow-premium-lg relative animate-scale-up">
-            <div className="flex justify-between items-center mb-4">
-              <h3 className="font-heading-style text-sm font-bold tracking-tight text-foreground lowercase flex items-center gap-1.5">
-                <IconSparkles className="size-4 text-accent-soft-fg" />
-                /configurar_de_nuevo
-              </h3>
-            </div>
-
-            <div className="space-y-4 font-mono text-xs">
-              <p className="text-muted-foreground leading-relaxed font-bold">
-                ¡Información eliminada con éxito!
-              </p>
-              <p className="text-muted-foreground leading-relaxed">
-                ¿Deseas volver a configurar tu aplicación Zetsu desde cero ahora mismo? Si eliges **Sí**, te redirigiremos al onboarding multipaso. Si eliges **No**, volverás al dashboard limpio.
-              </p>
-
-              <div className="pt-2 flex flex-col gap-2 sm:flex-row">
-                <Button
-                  type="button"
-                  variant="outline"
-                  className="w-full justify-center py-2 sm:flex-1"
-                  onClick={() => handleClearDataConfirm(false)}
-                  disabled={isPending}
-                >
-                  no, ir al dashboard
-                </Button>
-                <Button
-                  type="button"
-                  variant="default"
-                  className="w-full justify-center py-2 gap-1.5 whitespace-normal sm:flex-1"
-                  onClick={() => handleClearDataConfirm(true)}
-                  disabled={isPending}
-                >
-                  {isPending && <IconLoader2 className="size-3.5 animate-spin" />}
-                  sí, configurar (onboarding)
-                </Button>
-              </div>
-            </div>
-          </Card>
-        </div>
+        </AnimatedModal>
       )}
     </div>
   );

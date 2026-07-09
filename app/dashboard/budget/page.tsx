@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
-import { computeAvailableToBudget, computeBudgetRows } from "@/lib/finance/calculations";
+import { computeAvailableAfterDebtMinimums, computeAvailableToBudget, computeBudgetRows } from "@/lib/finance/calculations";
 import { getFinanceSnapshot } from "@/lib/finance/service";
 import { BudgetClient } from "@/app/dashboard/budget/budget-client";
 
@@ -35,6 +35,11 @@ export default async function BudgetPage() {
     snapshot.transactions,
     budgetRows,
   );
+  const availableAfterDebtMinimums = computeAvailableAfterDebtMinimums(
+    snapshot.accounts,
+    snapshot.transactions,
+    snapshot.debtObligations,
+  );
 
   return (
     <BudgetClient
@@ -42,6 +47,7 @@ export default async function BudgetPage() {
       budgetMonth={snapshot.budgetMonth}
       budgetRows={budgetRows}
       availableToBudget={availableToBudget}
+      availableAfterDebtMinimums={availableAfterDebtMinimums}
     />
   );
 }

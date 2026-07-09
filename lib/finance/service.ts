@@ -1,7 +1,21 @@
 import "server-only";
 
 import { addCadence, buildAnchorDate, inferScheduledStatus, monthStartIso, todayIso } from "@/lib/finance/dates";
+import { getSupportedBankInstitutions } from "@/lib/finance/banking";
+import {
+  buildAnchorDateFromSchedule,
+  collectRecurringOccurrencesInRange,
+  buildRecurringScheduleConfig,
+  getNextRecurringOccurrence,
+  getRecurringRuleScheduleDays,
+  normalizeScheduleDays,
+} from "@/lib/finance/recurring";
 import type {
+  BankConnection,
+  DebtAllocation,
+  DebtObligation,
+  ExternalAccount,
+  ExternalTransaction,
   FinanceAccount,
   FinanceBudgetCategoryMonth,
   FinanceBudgetMonth,
@@ -47,6 +61,7 @@ export async function ensureFinanceSetup(
         user_id: userId,
         name: fullName ? `Cuenta principal de ${fullName.split(" ")[0]}` : "Cuenta principal",
         type: "checking",
+        origin: "manual",
         currency,
         opening_balance: openingBalance,
         include_in_budget: true,
@@ -103,6 +118,11 @@ export async function getFinanceSnapshot(supabase: any, userId: string) {
     budgetMonthResult,
     budgetValuesResult,
     reconciliationsResult,
+    bankConnectionsResult,
+    externalAccountsResult,
+    externalTransactionsResult,
+    debtObligationsResult,
+    debtAllocationsResult,
   ] = await Promise.all([
     supabase.from("profiles").select("*").eq("id", userId).single(),
     supabase.from("accounts").select("*").eq("user_id", userId).is("archived_at", null).order("created_at", { ascending: true }),
@@ -112,6 +132,11 @@ export async function getFinanceSnapshot(supabase: any, userId: string) {
     supabase.from("budget_months").select("*").eq("user_id", userId).eq("month", monthStartIso()).maybeSingle(),
     supabase.from("budget_category_months").select("*"),
     supabase.from("reconciliations").select("*").eq("user_id", userId).order("statement_ending_date", { ascending: false }),
+    supabase.from("bank_connections").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    supabase.from("external_accounts").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
+    supabase.from("external_transactions").select("*").eq("user_id", userId).order("posted_date", { ascending: false }),
+    supabase.from("debt_obligations").select("*").eq("user_id", userId).order("created_at", { ascending: true }),
+    supabase.from("debt_allocations").select("*").eq("user_id", userId).order("created_at", { ascending: false }),
   ]);
 
   let budgetMonth = budgetMonthResult.data as FinanceBudgetMonth | null;
@@ -160,6 +185,12 @@ export async function getFinanceSnapshot(supabase: any, userId: string) {
     budgetMonth,
     budgetValues,
     reconciliations: reconciliationsResult.data ?? [],
+    bankConnections: (bankConnectionsResult.data ?? []) as BankConnection[],
+    externalAccounts: (externalAccountsResult.data ?? []) as ExternalAccount[],
+    externalTransactions: (externalTransactionsResult.data ?? []) as ExternalTransaction[],
+    debtObligations: (debtObligationsResult.data ?? []) as DebtObligation[],
+    debtAllocations: (debtAllocationsResult.data ?? []) as DebtAllocation[],
+    supportedInstitutions: getSupportedBankInstitutions(),
   };
 }
 
@@ -207,9 +238,18 @@ export async function upsertRecurringRule(params: {
   amount: number;
   cadence: RecurringCadence;
   anchorDate: string;
+  scheduleConfig?: Record<string, unknown>;
   transferAccountId?: string | null;
   notes?: string | null;
 }) {
+  const formatRecurringRuleError = (message: string) => {
+    if (message.includes("schedule_config")) {
+      return "Falta aplicar la migración más reciente de recurrencia (`schedule_config`) antes de guardar reglas automáticas.";
+    }
+
+    return message;
+  };
+
   const payload = {
     user_id: params.userId,
     account_id: params.accountId,
@@ -220,6 +260,7 @@ export async function upsertRecurringRule(params: {
     cadence: params.cadence,
     anchor_date: params.anchorDate,
     next_occurrence: params.anchorDate,
+    schedule_config: params.scheduleConfig ?? {},
     active: true,
     transfer_account_id: params.transferAccountId ?? null,
     notes: params.notes ?? null,
@@ -234,7 +275,7 @@ export async function upsertRecurringRule(params: {
       .eq("recurring_rule_id", params.ruleId)
       .in("status", ["scheduled", "pending"]);
 
-    const { data } = await params.supabase
+    const { data, error } = await params.supabase
       .from("recurring_rules")
       .update(payload)
       .eq("id", params.ruleId)
@@ -242,15 +283,23 @@ export async function upsertRecurringRule(params: {
       .select("*")
       .single();
 
+    if (error || !data) {
+      throw new Error(formatRecurringRuleError(error?.message || "No se pudo actualizar la regla recurrente."));
+    }
+
     await materializeRecurringRuleOccurrences(params.supabase, data, 120);
     return data as FinanceRecurringRule;
   }
 
-  const { data } = await params.supabase
+  const { data, error } = await params.supabase
     .from("recurring_rules")
     .insert(payload)
     .select("*")
     .single();
+
+  if (error || !data) {
+    throw new Error(formatRecurringRuleError(error?.message || "No se pudo crear la regla recurrente."));
+  }
 
   await materializeRecurringRuleOccurrences(params.supabase, data, 120);
   return data as FinanceRecurringRule;
@@ -261,14 +310,28 @@ export async function materializeRecurringRuleOccurrences(
   rule: FinanceRecurringRule,
   horizonDays = 120,
 ) {
+  if (!rule) {
+    throw new Error("No se recibió una regla recurrente válida para materializar.");
+  }
+
   if (!rule.active || rule.archived_at) {
     return;
   }
 
-  const startDate = rule.next_occurrence || rule.anchor_date;
-  const limitDate = new Date();
-  limitDate.setUTCDate(limitDate.getUTCDate() + horizonDays);
-  const limitIso = limitDate.toISOString().split("T")[0];
+  const materializationLimit = todayIso();
+
+  await supabase
+    .from("transactions")
+    .delete()
+    .eq("recurring_rule_id", rule.id)
+    .eq("status", "scheduled");
+
+  await supabase
+    .from("transactions")
+    .delete()
+    .eq("recurring_rule_id", rule.id)
+    .eq("status", "pending")
+    .gt("transaction_date", materializationLimit);
 
   const { data: existingTransactions } = await supabase
     .from("transactions")
@@ -281,9 +344,13 @@ export async function materializeRecurringRuleOccurrences(
   );
 
   const toInsert = [];
-  let occurrence = startDate;
+  const occurrenceDates = collectRecurringOccurrencesInRange(
+    rule,
+    rule.next_occurrence || rule.anchor_date,
+    materializationLimit,
+  );
 
-  while (occurrence <= limitIso) {
+  for (const occurrence of occurrenceDates) {
     if (!existingDates.has(occurrence)) {
       toInsert.push({
         user_id: rule.user_id,
@@ -302,28 +369,12 @@ export async function materializeRecurringRuleOccurrences(
         source_type: rule.kind === "income" ? "income_recurring" : "subscription_recurring",
       });
     }
-
-    const nextOccurrence = addCadence(occurrence, rule.cadence);
-    if (nextOccurrence === occurrence) {
-      break;
-    }
-    occurrence = nextOccurrence;
   }
 
   if (toInsert.length > 0) {
     await supabase.from("transactions").insert(toInsert);
   }
-
-  const { data: nextRows } = await supabase
-    .from("transactions")
-    .select("transaction_date")
-    .eq("recurring_rule_id", rule.id)
-    .in("status", ["scheduled", "pending"])
-    .gte("transaction_date", todayIso())
-    .order("transaction_date", { ascending: true })
-    .limit(1);
-
-  const nextOccurrence = nextRows?.[0]?.transaction_date ?? startDate;
+  const nextOccurrence = getNextRecurringOccurrence(rule, todayIso()) ?? rule.anchor_date;
 
   await supabase
     .from("recurring_rules")
@@ -365,10 +416,27 @@ export async function archiveRecurringRule(supabase: any, userId: string, ruleId
     .eq("user_id", userId);
 }
 
-export function buildRecurringAnchorFromForm(dayValue: string, cadence: RecurringCadence) {
+export function buildRecurringAnchorFromForm(
+  dayValue: string,
+  cadence: RecurringCadence,
+  scheduleDayValues: Array<string | number | null | undefined> = [],
+) {
   const parsed = Math.max(1, Math.min(31, Number.parseInt(dayValue || "1", 10) || 1));
+  const scheduleDays = normalizeScheduleDays(scheduleDayValues);
+
+  if (cadence === "bi-weekly" && scheduleDays.length >= 2) {
+    return buildAnchorDateFromSchedule(cadence, parsed, scheduleDays);
+  }
+
   const anchor = buildAnchorDate(parsed);
   return cadence === "daily" || cadence === "weekly" ? todayIso() : anchor;
+}
+
+export function buildRecurringScheduleConfigFromForm(
+  cadence: RecurringCadence,
+  scheduleDayValues: Array<string | number | null | undefined> = [],
+) {
+  return buildRecurringScheduleConfig(cadence, normalizeScheduleDays(scheduleDayValues));
 }
 
 function paramsCategoryName(rule: FinanceRecurringRule) {

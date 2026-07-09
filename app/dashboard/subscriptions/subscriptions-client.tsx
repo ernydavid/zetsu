@@ -6,9 +6,14 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
+import { AppLogo } from "@/components/common/app-logo";
+import { AnimatedModal } from "@/components/common/animated-modal";
+import { CategoryLibraryInput } from "@/components/common/category-library-input";
 import { ThemeToggle } from "@/components/common/theme-toggle";
 import { Sidebar } from "@/components/common/sidebar";
 import { useAccentTheme, AccentTheme } from "@/components/common/theme-context";
+import { todayLocalIso } from "@/lib/finance/dates";
 import { signout } from "@/app/auth/actions";
 import { sileo } from "sileo";
 import { SubscriptionFrequencySelect } from "@/components/common/frequency-select";
@@ -39,6 +44,7 @@ import {
 interface SubscriptionsClientProps {
   profile: any;
   subscriptions: any[];
+  expenseCategoryLibrary: string[];
   isPro: boolean;
   currency: string;
 }
@@ -46,6 +52,7 @@ interface SubscriptionsClientProps {
 export function SubscriptionsClient({
   profile,
   subscriptions = [],
+  expenseCategoryLibrary,
   isPro,
   currency,
 }: SubscriptionsClientProps) {
@@ -69,10 +76,12 @@ export function SubscriptionsClient({
 
   const [expenseFrequency, setExpenseFrequency] = React.useState<string>("monthly");
   const [expenseDay, setExpenseDay] = React.useState<string>("");
+  const [subscriptionCategoryValue, setSubscriptionCategoryValue] = React.useState("servicios");
 
   React.useEffect(() => {
     if (editingSubscription) {
       setExpenseFrequency(editingSubscription.billing_cycle || "monthly");
+      setSubscriptionCategoryValue(editingSubscription.category || "servicios");
       if (editingSubscription.next_payment_date) {
         const d = new Date(editingSubscription.next_payment_date);
         const day = d.getUTCDate();
@@ -84,6 +93,7 @@ export function SubscriptionsClient({
     } else {
       setExpenseFrequency("monthly");
       setExpenseDay(String(new Date().getUTCDate()));
+      setSubscriptionCategoryValue("servicios");
     }
   }, [editingSubscription]);
 
@@ -215,9 +225,7 @@ export function SubscriptionsClient({
       {/* 2. MOBILE HEADER & NAVIGATION */}
       <header className="lg:hidden border-b border-premium bg-card px-6 py-4 flex items-center justify-between sticky top-0 z-40">
         <div className="flex items-center space-x-2">
-          <span className="font-heading-style text-xl font-black tracking-tighter">
-            zetsu<span className="text-accent-soft-fg font-serif">.</span>
-          </span>
+          <AppLogo size="sm" variant="full" priority />
           <span className="text-[9px] font-mono px-2 py-0.2 border border-accent-soft-border rounded-full bg-accent-soft-bg text-accent-soft-fg uppercase font-bold">
             {profile.billing_tier}
           </span>
@@ -239,7 +247,7 @@ export function SubscriptionsClient({
       {isMobileMenuOpen && (
         <div className="lg:hidden fixed inset-0 z-50 bg-background/90 backdrop-blur-md flex flex-col p-6 animate-fade-in">
           <div className="flex justify-between items-center mb-8">
-            <span className="font-heading-style text-xl font-black tracking-tighter">zetsu.</span>
+            <AppLogo size="sm" variant="full" />
             <Button size="icon-sm" variant="outline" onClick={() => setIsMobileMenuOpen(false)}>
               <IconX className="size-4" />
             </Button>
@@ -301,7 +309,7 @@ export function SubscriptionsClient({
               <span className="text-xs font-mono text-muted-foreground uppercase tracking-wider font-bold">
                 /automatizacion_financiera
               </span>
-              <h1 className="font-heading-style text-3xl font-black tracking-tight text-foreground lowercase">
+              <h1 className="font-heading-style text-3xl font-black tracking-tight text-accent-soft-fg lowercase">
                 gestión de pagos recurrentes
               </h1>
             </div>
@@ -483,8 +491,12 @@ export function SubscriptionsClient({
 
       {/* 4. MODALS CONTAINER */}
       {activeModal === "payment" && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-md animate-fade-in px-4">
-          <Card className="max-w-md w-full bg-card border border-premium shadow-premium-lg relative animate-scale-up">
+        <AnimatedModal
+          open={activeModal === "payment"}
+          overlayClassName="flex items-center justify-center bg-background/80 backdrop-blur-md px-4"
+          panelClassName="max-w-md w-full"
+        >
+          <Card className="max-w-md w-full bg-card border border-premium shadow-premium-lg relative">
             <button
               onClick={() => {
                 setActiveModal(null);
@@ -526,29 +538,29 @@ export function SubscriptionsClient({
                   required
                 />
               </div>
-              <div className="grid grid-cols-2 gap-3">
-                <div className="space-y-1">
-                  <Label htmlFor="modal-pay-amount" className="text-[10px] font-bold uppercase">Monto ({currency})</Label>
-                  <Input
-                    id="modal-pay-amount"
-                    name="amount"
-                    type="number"
-                    step="0.01"
-                    placeholder="45"
-                    defaultValue={editingSubscription?.amount || ""}
-                    required
-                  />
-                </div>
-                <div className="space-y-1">
-                  <Label htmlFor="modal-category" className="text-[10px] font-bold uppercase">Categoría</Label>
-                  <Input
-                    id="modal-category"
-                    name="category"
-                    placeholder="servicios"
-                    defaultValue={editingSubscription?.category || "servicios"}
-                  />
-                </div>
+              <div className="space-y-1">
+                <Label htmlFor="modal-pay-amount" className="text-[10px] font-bold uppercase">Monto ({currency})</Label>
+                <Input
+                  id="modal-pay-amount"
+                  name="amount"
+                  type="number"
+                  step="0.01"
+                  placeholder="45"
+                  defaultValue={editingSubscription?.amount || ""}
+                  required
+                />
               </div>
+
+              <CategoryLibraryInput
+                id="subscriptions-category"
+                name="category"
+                label="Categoría"
+                value={subscriptionCategoryValue}
+                onChange={setSubscriptionCategoryValue}
+                categories={expenseCategoryLibrary}
+                placeholder="servicios"
+                helperText="Elige una categoría sugerida o escribe una nueva para guardarla."
+              />
 
               {/* Toggle Recurrente (Always forced to True since we are inside subscriptions module) */}
               <div className="flex items-center justify-between p-3 bg-muted/20 border border-border rounded-xl">
@@ -558,19 +570,11 @@ export function SubscriptionsClient({
                     {isExpenseRecurring ? "Se debita periódicamente" : "Pago de una sola vez"}
                   </span>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => setIsExpenseRecurring(!isExpenseRecurring)}
-                  className={`relative inline-flex h-5 w-9 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
-                    isExpenseRecurring ? "bg-accent-soft-fg" : "bg-muted"
-                  }`}
-                >
-                  <span
-                    className={`pointer-events-none inline-block size-4 transform rounded-full bg-background shadow ring-0 transition duration-200 ease-in-out ${
-                      isExpenseRecurring ? "translate-x-4" : "translate-x-0"
-                    }`}
-                  />
-                </button>
+                <Switch
+                  checked={isExpenseRecurring}
+                  onCheckedChange={setIsExpenseRecurring}
+                  aria-label="Alternar suscripción recurrente"
+                />
                 <input type="hidden" name="is_recurring" value={isExpenseRecurring ? "true" : "false"} />
               </div>
 
@@ -621,7 +625,7 @@ export function SubscriptionsClient({
                     id="modal-pay-date"
                     name="next_pay_date"
                     type="date"
-                    defaultValue={new Date().toISOString().split("T")[0]}
+                    defaultValue={todayLocalIso()}
                     required
                   />
                 </div>
@@ -658,13 +662,17 @@ export function SubscriptionsClient({
               </div>
             </form>
           </Card>
-        </div>
+        </AnimatedModal>
       )}
 
       {/* Delete Confirmation Modal */}
       {deleteTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-md animate-fade-in px-4">
-          <Card className="max-w-sm w-full bg-card border border-premium shadow-premium-lg relative animate-scale-up font-mono text-xs">
+        <AnimatedModal
+          open={!!deleteTarget}
+          overlayClassName="flex items-center justify-center bg-background/80 backdrop-blur-md px-4"
+          panelClassName="max-w-sm w-full"
+        >
+          <Card className="max-w-sm w-full bg-card border border-premium shadow-premium-lg relative font-mono text-xs">
             <div className="flex justify-between items-center mb-4">
               <h3 className="font-heading-style text-sm font-bold tracking-tight text-foreground lowercase flex items-center gap-1.5">
                 <IconAlertCircle className="size-4 text-destructive" />
@@ -710,7 +718,7 @@ export function SubscriptionsClient({
               </div>
             </div>
           </Card>
-        </div>
+        </AnimatedModal>
       )}
     </div>
   );

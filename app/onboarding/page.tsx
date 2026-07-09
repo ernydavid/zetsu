@@ -8,9 +8,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent } from "@/components/ui/card";
+import { FormSelect } from "@/components/ui/select";
 import { ThemeToggle } from "@/components/common/theme-toggle";
 import { useAccentTheme, AccentTheme } from "@/components/common/theme-context";
-import { IncomeFrequencySelect, SubscriptionFrequencySelect } from "@/components/common/frequency-select";
+import { SubscriptionFrequencySelect } from "@/components/common/frequency-select";
+import { CategoryLibraryInput } from "@/components/common/category-library-input";
+import { IncomeRecurringFields } from "@/components/common/income-recurring-fields";
+import { todayLocalIso } from "@/lib/finance/dates";
+import { buildCategoryLibrary } from "@/lib/finance/recurring";
 import {
   IconArrowRight,
   IconArrowLeft,
@@ -27,6 +32,8 @@ interface IncomeItem {
   source: string;
   amount: number;
   frequency: "weekly" | "bi-weekly" | "monthly" | "one-time";
+  day_of_month?: number;
+  schedule_days?: number[];
 }
 
 interface SubscriptionItem {
@@ -34,168 +41,236 @@ interface SubscriptionItem {
   amount: number;
   billing_cycle: "daily" | "weekly" | "bi-weekly" | "monthly" | "yearly";
   category: string;
+  next_payment_date: string;
+}
+
+type OnboardingStep = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8;
+
+function normalizeDays(values: string[]) {
+  return Array.from(
+    new Set(
+      values
+        .map((value) => Number.parseInt(value, 10))
+        .filter((value) => Number.isFinite(value))
+        .map((value) => Math.max(1, Math.min(31, value))),
+    ),
+  ).sort((a, b) => a - b);
 }
 
 export default function OnboardingPage() {
   const router = useRouter();
   const { accentTheme, setAccentTheme } = useAccentTheme();
-  
-  // Steps:
-  // 1: Personal Details (Name, Currency)
-  // 2: Add Income Form
-  // 3: Income Loop confirmation ("¿Tienes otro ingreso?")
-  // 4: Subscription opt-in question ("¿Deseas agregar suscripciones?")
-  // 5: Add Subscription Form
-  // 6: Subscription Loop confirmation ("¿Tienes otra suscripción?")
-  // 7: Theme, Billing Tier & Final Welcome
-  const [step, setStep] = React.useState<1 | 2 | 3 | 4 | 5 | 6 | 7>(1);
+  const supabase = createClient();
+
+  const [step, setStep] = React.useState<OnboardingStep>(1);
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [fullName, setFullName] = React.useState("");
   const [currency, setCurrency] = React.useState("USD");
-  const [accountName, setAccountName] = React.useState("Cuenta principal");
-  const [openingBalance, setOpeningBalance] = React.useState("0");
 
-  // Collected Lists
   const [incomesList, setIncomesList] = React.useState<IncomeItem[]>([]);
-  const [subscriptionsList, setSubscriptionsList] = React.useState<SubscriptionItem[]>([]);
+  const [subscriptionsList, setSubscriptionsList] = React.useState<
+    SubscriptionItem[]
+  >([]);
+  const [subscriptionCategoryLibrary, setSubscriptionCategoryLibrary] =
+    React.useState<string[]>(buildCategoryLibrary());
 
-  // Current Input States
   const [incomeSource, setIncomeSource] = React.useState("");
   const [incomeAmount, setIncomeAmount] = React.useState("");
-  const [incomeFreq, setIncomeFreq] = React.useState<"weekly" | "bi-weekly" | "monthly">("monthly");
+  const [incomeFreq, setIncomeFreq] = React.useState<
+    "weekly" | "bi-weekly" | "monthly"
+  >("monthly");
+  const [incomePrimaryDay, setIncomePrimaryDay] = React.useState("1");
+  const [incomeSecondaryDay, setIncomeSecondaryDay] = React.useState("15");
 
   const [subName, setSubName] = React.useState("");
   const [subAmount, setSubAmount] = React.useState("");
-  const [subFreq, setSubFreq] = React.useState<"daily" | "weekly" | "bi-weekly" | "monthly">("monthly");
+  const [subFreq, setSubFreq] = React.useState<
+    "daily" | "weekly" | "bi-weekly" | "monthly"
+  >("monthly");
   const [subCategory, setSubCategory] = React.useState("entretenimiento");
-  const [subDate, setSubDate] = React.useState(new Date().toISOString().split("T")[0]);
+  const [subDate, setSubDate] = React.useState(todayLocalIso());
 
-  const [selectedPlan, setSelectedPlan] = React.useState<"free" | "pro">("free");
-
-  const supabase = createClient();
+  const [selectedPlan, setSelectedPlan] = React.useState<"free" | "pro">(
+    "free",
+  );
 
   React.useEffect(() => {
-    async function loadUser() {
+    async function loadUserData() {
       const {
         data: { user },
       } = await supabase.auth.getUser();
-      if (user) {
-        if (user.user_metadata?.full_name) {
-          setFullName(user.user_metadata.full_name);
-        }
+
+      if (!user) {
+        return;
       }
+
+      if (user.user_metadata?.full_name) {
+        setFullName(user.user_metadata.full_name);
+      }
+
+      const { data: categories } = await supabase
+        .from("categories")
+        .select("name, kind")
+        .eq("user_id", user.id)
+        .eq("kind", "expense");
+
+      const fetchedNames = (categories ?? []).map(
+        (category: { name: string }) => category.name,
+      );
+      setSubscriptionCategoryLibrary(buildCategoryLibrary(fetchedNames));
     }
-    loadUser();
+
+    loadUserData();
   }, [supabase]);
 
-  // Translate frequencies for displaying nicely in loops
   const translateFrequency = (freq: string) => {
     switch (freq) {
-      case "daily": return "diario";
-      case "weekly": return "semanal";
-      case "bi-weekly": return "quincenal";
-      case "monthly": return "mensual";
-      case "yearly": return "anual";
-      default: return freq;
+      case "daily":
+        return "diario";
+      case "weekly":
+        return "semanal";
+      case "bi-weekly":
+        return "quincenal";
+      case "monthly":
+        return "mensual";
+      case "yearly":
+        return "anual";
+      default:
+        return freq;
     }
   };
 
   const getPhaseInfo = () => {
     switch (step) {
       case 1:
-        return { phaseNum: 1, name: "perfil", pct: 20 };
+        return { phaseNum: 1, name: "nombre", pct: 12 };
       case 2:
+        return { phaseNum: 2, name: "divisa", pct: 24 };
       case 3:
-        return { phaseNum: 2, name: "ingresos", pct: 50 };
       case 4:
+        return { phaseNum: 3, name: "ingresos", pct: 52 };
       case 5:
       case 6:
-        return { phaseNum: 3, name: "suscripciones", pct: 80 };
       case 7:
-        return { phaseNum: 4, name: "personalización", pct: 100 };
+        return { phaseNum: 4, name: "suscripciones", pct: 80 };
+      case 8:
+        return { phaseNum: 5, name: "personalización", pct: 100 };
     }
   };
 
   const phase = getPhaseInfo();
 
-  // Step 1: Personal Details validation
-  const handleStep1Submit = () => {
+  const formatIncomeSchedule = (income: IncomeItem) => {
+    if (
+      income.frequency !== "bi-weekly" ||
+      !income.schedule_days ||
+      income.schedule_days.length < 2
+    ) {
+      return translateFrequency(income.frequency);
+    }
+
+    return `quincenal · días ${income.schedule_days[0]} y ${income.schedule_days[1]}`;
+  };
+
+  const handleNameStep = () => {
     if (!fullName.trim()) {
       setError("Por favor, ingresa tu nombre.");
       return;
     }
-    if (!accountName.trim()) {
-      setError("Asigna un nombre a tu cuenta principal.");
-      return;
-    }
+
     setError("");
     setStep(2);
   };
 
-  // Step 2: Add Income validation
+  const handleCurrencyStep = () => {
+    if (!currency.trim()) {
+      setError("Selecciona una divisa principal.");
+      return;
+    }
+
+    setError("");
+    setStep(3);
+  };
+
   const handleAddIncome = () => {
     if (!incomeSource.trim() || !incomeAmount.trim()) {
       setError("Por favor, rellena todos los campos del ingreso.");
       return;
     }
-    const amt = parseFloat(incomeAmount);
-    if (isNaN(amt) || amt <= 0) {
+
+    const amount = parseFloat(incomeAmount);
+    if (Number.isNaN(amount) || amount <= 0) {
       setError("Ingresa una cantidad de ingreso válida.");
+      return;
+    }
+
+    const scheduleDays =
+      incomeFreq === "bi-weekly"
+        ? normalizeDays([incomePrimaryDay, incomeSecondaryDay])
+        : [];
+
+    if (incomeFreq === "bi-weekly" && scheduleDays.length < 2) {
+      setError("Para un ingreso quincenal debes elegir dos días distintos.");
       return;
     }
 
     setIncomesList((prev) => [
       ...prev,
-      { source: incomeSource.trim(), amount: amt, frequency: incomeFreq },
+      {
+        source: incomeSource.trim(),
+        amount,
+        frequency: incomeFreq,
+        day_of_month: Number.parseInt(incomePrimaryDay, 10) || 1,
+        schedule_days: scheduleDays.length > 0 ? scheduleDays : undefined,
+      },
     ]);
 
-    // Reset fields
     setIncomeSource("");
     setIncomeAmount("");
     setIncomeFreq("monthly");
+    setIncomePrimaryDay("1");
+    setIncomeSecondaryDay("15");
     setError("");
-
-    // Advance to Step 3 (Loop ask)
-    setStep(3);
+    setStep(4);
   };
 
-  // Step 5: Add Subscription validation
   const handleAddSubscription = () => {
     if (!subName.trim() || !subAmount.trim()) {
       setError("Por favor, rellena todos los campos de la suscripción.");
       return;
     }
-    const amt = parseFloat(subAmount);
-    if (isNaN(amt) || amt <= 0) {
+
+    const amount = parseFloat(subAmount);
+    if (Number.isNaN(amount) || amount <= 0) {
       setError("Ingresa un monto de suscripción válido.");
       return;
     }
 
+    const normalizedCategory = (subCategory.trim() || "otros").toLowerCase();
     setSubscriptionsList((prev) => [
       ...prev,
       {
         name: subName.trim(),
-        amount: amt,
+        amount,
         billing_cycle: subFreq,
-        category: subCategory.trim() || "entretenimiento",
+        category: normalizedCategory,
         next_payment_date: subDate,
       },
     ]);
+    setSubscriptionCategoryLibrary((prev) =>
+      buildCategoryLibrary([...prev, normalizedCategory]),
+    );
 
-    // Reset fields
     setSubName("");
     setSubAmount("");
     setSubFreq("monthly");
     setSubCategory("entretenimiento");
-    setSubDate(new Date().toISOString().split("T")[0]);
+    setSubDate(todayLocalIso());
     setError("");
-
-    // Advance to Step 6 (Loop ask)
-    setStep(6);
+    setStep(7);
   };
 
-  // Submit everything to the database
   const handleSubmitAll = async () => {
     setLoading(true);
     setError("");
@@ -204,8 +279,6 @@ export default function OnboardingPage() {
       const result = await submitOnboarding({
         fullName,
         currency,
-        accountName,
-        openingBalance: Number.parseFloat(openingBalance || "0") || 0,
         incomes: incomesList,
         subscriptions: subscriptionsList,
         billingTier: selectedPlan,
@@ -214,27 +287,31 @@ export default function OnboardingPage() {
       if (result.error) {
         setError(result.error);
         setLoading(false);
-      } else {
-        if (selectedPlan === "pro") {
-          // Redirect to stripe mock checkout
-          router.push("/api/checkout/stripe?simulated=true");
-        } else {
-          router.push("/dashboard");
-        }
+        return;
       }
-    } catch (err: any) {
+
+      if (selectedPlan === "pro") {
+        router.push("/api/checkout/stripe?simulated=true&next=/welcome");
+        return;
+      }
+
+      router.push("/welcome");
+    } catch {
       setError("Ocurrió un error inesperado al guardar. Inténtalo de nuevo.");
       setLoading(false);
     }
   };
 
-  // Delete handlers inside the loop summary screens
   const deleteIncomeFromList = (index: number) => {
-    setIncomesList((prev) => prev.filter((_, i) => i !== index));
+    setIncomesList((prev) =>
+      prev.filter((_, currentIndex) => currentIndex !== index),
+    );
   };
 
   const deleteSubscriptionFromList = (index: number) => {
-    setSubscriptionsList((prev) => prev.filter((_, i) => i !== index));
+    setSubscriptionsList((prev) =>
+      prev.filter((_, currentIndex) => currentIndex !== index),
+    );
   };
 
   const themes: { id: AccentTheme; class: string }[] = [
@@ -252,18 +329,18 @@ export default function OnboardingPage() {
       </div>
 
       <div className="w-full max-w-[500px] space-y-8">
-        {/* Onboarding Header */}
         <div className="space-y-2 text-center md:text-left">
           <div className="flex justify-between items-center text-xs font-mono text-muted-foreground uppercase tracking-widest">
-            <span>Fase {phase.phaseNum} de 4: {phase.name}</span>
+            <span>
+              Fase {phase.phaseNum} de 5: {phase.name}
+            </span>
             <span>{fullName ? fullName.toLowerCase() : "onboarding"}</span>
           </div>
-          {/* Progress bar */}
           <div className="w-full h-1 bg-border rounded-full overflow-hidden">
             <div
               className="h-full bg-accent-soft-fg transition-all duration-300"
               style={{ width: `${phase.pct}%` }}
-            ></div>
+            />
           </div>
         </div>
 
@@ -275,81 +352,31 @@ export default function OnboardingPage() {
 
         <Card className="bg-background shadow-premium-lg overflow-hidden transition-all duration-300">
           <CardContent className="pt-0">
-            {/* STEP 1: Personal Details */}
             {step === 1 && (
               <div className="space-y-6">
                 <div className="space-y-1">
                   <h2 className="font-heading-style text-2xl font-bold tracking-tight lowercase">
-                    /sobre ti
+                    /tu_nombre
                   </h2>
                   <p className="text-xs text-muted-foreground font-mono">
-                    Comencemos por configurar los datos básicos de tu cuenta.
+                    Empecemos por lo más simple.
                   </p>
                 </div>
 
-                <div className="space-y-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="fullName">¿Cómo te llamas?</Label>
-                    <Input
-                      id="fullName"
-                      value={fullName}
-                      onChange={(e) => setFullName(e.target.value)}
-                      placeholder="Ingresa tu nombre"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="currency">Divisa Principal</Label>
-                    <div className="relative">
-                      <select
-                        id="currency"
-                        value={currency}
-                        onChange={(e) => setCurrency(e.target.value)}
-                        className="flex h-10 w-full bg-background px-3 py-2 text-sm rounded-xl border border-premium focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-foreground font-mono transition-colors appearance-none cursor-pointer"
-                      >
-                        <option value="USD">USD ($ - Dólar estadounidense)</option>
-                        <option value="EUR">EUR (€ - Euro)</option>
-                        <option value="COP">COP ($ - Peso colombiano)</option>
-                        <option value="MXN">MXN ($ - Peso mexicano)</option>
-                        <option value="ARS">ARS ($ - Peso argentino)</option>
-                      </select>
-                      <div className="pointer-events-none absolute inset-y-0 right-0 flex items-center px-3 text-muted-foreground font-mono text-xs border-l border-border">
-                        ▼
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="accountName">Cuenta principal</Label>
-                    <Input
-                      id="accountName"
-                      value={accountName}
-                      onChange={(e) => setAccountName(e.target.value)}
-                      placeholder="Ej. Cuenta principal"
-                      required
-                    />
-                  </div>
-
-                  <div className="space-y-2">
-                    <Label htmlFor="openingBalance">Saldo inicial ({currency})</Label>
-                    <Input
-                      id="openingBalance"
-                      type="number"
-                      step="0.01"
-                      value={openingBalance}
-                      onChange={(e) => setOpeningBalance(e.target.value)}
-                      placeholder="0"
-                    />
-                    <p className="text-[10px] text-muted-foreground font-mono">
-                      Este saldo inicial representa el dinero real con el que empiezas a usar Zetsu.
-                    </p>
-                  </div>
+                <div className="space-y-2">
+                  <Label htmlFor="fullName">¿Cómo te llamas?</Label>
+                  <Input
+                    id="fullName"
+                    value={fullName}
+                    onChange={(event) => setFullName(event.target.value)}
+                    placeholder="Ingresa tu nombre"
+                    required
+                  />
                 </div>
 
                 <div className="pt-4">
                   <Button
-                    onClick={handleStep1Submit}
+                    onClick={handleNameStep}
                     variant="soft"
                     className="w-full justify-center gap-2"
                   >
@@ -359,65 +386,107 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* STEP 2: Add Income Form */}
             {step === 2 && (
+              <div className="space-y-6">
+                <div className="space-y-1">
+                  <h2 className="font-heading-style text-2xl font-bold tracking-tight lowercase">
+                    /tu_divisa
+                  </h2>
+                  <p className="text-xs text-muted-foreground font-mono">
+                    Esta será la moneda principal de tu experiencia financiera.
+                  </p>
+                </div>
+
+                <div className="space-y-2">
+                  <Label htmlFor="currency">Divisa Principal</Label>
+                  <FormSelect
+                    id="currency"
+                    value={currency}
+                    onValueChange={setCurrency}
+                    options={[
+                      { value: "USD", label: "USD ($ - Dólar estadounidense)" },
+                      { value: "EUR", label: "EUR (€ - Euro)" },
+                      { value: "COP", label: "COP ($ - Peso colombiano)" },
+                      { value: "MXN", label: "MXN ($ - Peso mexicano)" },
+                      { value: "ARS", label: "ARS ($ - Peso argentino)" },
+                    ]}
+                  />
+                </div>
+
+                <div className="flex gap-3 pt-4">
+                  <Button
+                    onClick={() => setStep(1)}
+                    variant="outline"
+                    className="gap-2"
+                  >
+                    <IconArrowLeft className="size-4" /> ATRÁS
+                  </Button>
+                  <Button
+                    onClick={handleCurrencyStep}
+                    variant="soft"
+                    className="flex-1 justify-center gap-2"
+                  >
+                    CONTINUAR <IconArrowRight className="size-4" />
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {step === 3 && (
               <div className="space-y-6">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
                     <IconCoin className="size-5 text-accent-soft-fg" />
                     <h2 className="font-heading-style text-2xl font-bold tracking-tight lowercase">
-                      /agregar ingreso
+                      /agregar_ingreso
                     </h2>
                   </div>
                   <p className="text-xs text-muted-foreground font-mono">
-                    Registra una de tus fuentes de ingresos para calcular tu balance neto.
+                    Tu arranque financiero visible en Zetsu empieza registrando
+                    ingresos.
                   </p>
                 </div>
 
                 <div className="space-y-4">
                   <div className="space-y-2">
-                    <Label htmlFor="incomeSource">Nombre o Fuente del ingreso</Label>
+                    <Label htmlFor="incomeSource">
+                      Nombre o Fuente del ingreso
+                    </Label>
                     <Input
                       id="incomeSource"
                       value={incomeSource}
-                      onChange={(e) => setIncomeSource(e.target.value)}
-                      placeholder="Ej. Nómina Principal, Trabajo Freelance"
+                      onChange={(event) => setIncomeSource(event.target.value)}
+                      placeholder="Ej. Nómina principal, freelance"
                     />
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="incomeAmount">Monto ({currency})</Label>
-                      <Input
-                        id="incomeAmount"
-                        type="number"
-                        value={incomeAmount}
-                        onChange={(e) => setIncomeAmount(e.target.value)}
-                        placeholder="Ej. 2500"
-                      />
-                    </div>
-
-                    <div className="space-y-2">
-                      <Label htmlFor="incomeFreq">¿Cada cuánto lo recibes?</Label>
-                      <IncomeFrequencySelect
-                        id="incomeFreq"
-                        value={incomeFreq}
-                        onChange={(e) => setIncomeFreq(e.target.value as any)}
-                      />
-                    </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="incomeAmount">Monto ({currency})</Label>
+                    <Input
+                      id="incomeAmount"
+                      type="number"
+                      value={incomeAmount}
+                      onChange={(event) => setIncomeAmount(event.target.value)}
+                      placeholder="Ej. 2500"
+                    />
                   </div>
+
+                  <IncomeRecurringFields
+                    frequency={incomeFreq}
+                    onFrequencyChange={setIncomeFreq}
+                    primaryDay={incomePrimaryDay}
+                    onPrimaryDayChange={setIncomePrimaryDay}
+                    secondaryDay={incomeSecondaryDay}
+                    onSecondaryDayChange={setIncomeSecondaryDay}
+                    frequencyId="incomeFreq"
+                    primaryDayId="incomePrimaryDay"
+                    secondaryDayId="incomeSecondaryDay"
+                  />
                 </div>
 
                 <div className="flex gap-3 pt-4">
                   <Button
-                    onClick={() => {
-                      setError("");
-                      if (incomesList.length > 0) {
-                        setStep(3); // Go back to summary if we have items
-                      } else {
-                        setStep(1);
-                      }
-                    }}
+                    onClick={() => setStep(2)}
                     variant="outline"
                     className="gap-2"
                   >
@@ -434,34 +503,38 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* STEP 3: Income loop summary / "¿Tienes otro ingreso?" */}
-            {step === 3 && (
+            {step === 4 && (
               <div className="space-y-6">
                 <div className="space-y-1">
                   <h2 className="font-heading-style text-2xl font-bold tracking-tight lowercase">
-                    /ingresos registrados
+                    /ingresos_registrados
                   </h2>
                   <p className="text-xs text-muted-foreground font-mono">
                     Estos son tus ingresos registrados hasta el momento.
                   </p>
                 </div>
 
-                {/* Incomes Summary List */}
                 <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                  {incomesList.map((inc, index) => (
+                  {incomesList.map((income, index) => (
                     <div
-                      key={index}
+                      key={`${income.source}-${index}`}
                       className="flex justify-between items-center p-3 rounded-xl border border-premium bg-accent-soft-bg/30 font-mono text-xs"
                     >
                       <div className="space-y-0.5">
-                        <p className="font-bold text-foreground">{inc.source}</p>
+                        <p className="font-bold text-foreground">
+                          {income.source}
+                        </p>
                         <p className="text-[10px] text-muted-foreground">
-                          Recibido de forma: {translateFrequency(inc.frequency)}
+                          Recibido de forma: {formatIncomeSchedule(income)}
                         </p>
                       </div>
                       <div className="flex items-center space-x-3">
                         <span className="font-bold text-emerald-600 dark:text-emerald-400">
-                          +{new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(inc.amount)}
+                          +
+                          {new Intl.NumberFormat("es-ES", {
+                            style: "currency",
+                            currency,
+                          }).format(income.amount)}
                         </span>
                         <button
                           onClick={() => deleteIncomeFromList(index)}
@@ -476,17 +549,19 @@ export default function OnboardingPage() {
                 </div>
 
                 <div className="border-t border-dashed border-border pt-4 text-center space-y-4">
-                  <p className="text-sm font-medium">¿Tienes otro ingreso más que registrar?</p>
+                  <p className="text-xs font-medium font-mono text-muted-foreground">
+                    ¿Tienes otro ingreso más que registrar?
+                  </p>
                   <div className="flex gap-3">
                     <Button
-                      onClick={() => setStep(2)}
+                      onClick={() => setStep(3)}
                       variant="outline"
                       className="flex-1 justify-center gap-2"
                     >
                       SÍ, AGREGAR OTRO <IconPlus className="size-4" />
                     </Button>
                     <Button
-                      onClick={() => setStep(4)}
+                      onClick={() => setStep(5)}
                       variant="soft"
                       className="flex-1 justify-center gap-2"
                     >
@@ -497,8 +572,7 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* STEP 4: Subscription Opt-in Choice */}
-            {step === 4 && (
+            {step === 5 && (
               <div className="space-y-6">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
@@ -508,22 +582,25 @@ export default function OnboardingPage() {
                     </h2>
                   </div>
                   <p className="text-xs text-muted-foreground font-mono">
-                    ¿Quieres registrar tus suscripciones recurrentes (como Netflix, Spotify, etc.) ahora mismo?
+                    ¿Quieres registrar tus suscripciones recurrentes ahora
+                    mismo?
                   </p>
                 </div>
 
                 <div className="border border-dashed border-border p-4 rounded-xl bg-muted/5 space-y-2 font-mono text-[10px] text-muted-foreground">
                   <p className="font-bold text-foreground uppercase tracking-wide flex items-center gap-1">
-                    <IconSparkles className="size-3 text-accent-soft-fg" /> Módulo de Suscripciones (PRO)
+                    <IconSparkles className="size-3 text-accent-soft-fg" />{" "}
+                    Módulo de Suscripciones (PRO)
                   </p>
                   <p>
-                    Zetsu te ayuda a centralizar tus débitos mensuales de entretenimiento y software de forma automática.
+                    Puedes organizarlas desde una biblioteca de categorías y
+                    dejar que Zetsu las materialice en tu historial.
                   </p>
                 </div>
 
                 <div className="flex gap-3 pt-4">
                   <Button
-                    onClick={() => setStep(3)}
+                    onClick={() => setStep(4)}
                     variant="outline"
                     className="gap-2"
                   >
@@ -531,14 +608,14 @@ export default function OnboardingPage() {
                   </Button>
                   <div className="flex-1 flex gap-3">
                     <Button
-                      onClick={() => setStep(7)} // Skip
+                      onClick={() => setStep(8)}
                       variant="outline"
                       className="flex-1 justify-center"
                     >
                       DESPUÉS
                     </Button>
                     <Button
-                      onClick={() => setStep(5)} // Add now
+                      onClick={() => setStep(6)}
                       variant="soft"
                       className="flex-1 justify-center"
                     >
@@ -549,12 +626,11 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* STEP 5: Add Subscription Form */}
-            {step === 5 && (
+            {step === 6 && (
               <div className="space-y-6">
                 <div className="space-y-1">
                   <h2 className="font-heading-style text-2xl font-bold tracking-tight lowercase">
-                    /agregar suscripción
+                    /agregar_suscripción
                   </h2>
                   <p className="text-xs text-muted-foreground font-mono">
                     Introduce los detalles de tu suscripción de pago.
@@ -567,7 +643,7 @@ export default function OnboardingPage() {
                     <Input
                       id="subName"
                       value={subName}
-                      onChange={(e) => setSubName(e.target.value)}
+                      onChange={(event) => setSubName(event.target.value)}
                       placeholder="Ej. Netflix, Spotify, Gimnasio"
                     />
                   </div>
@@ -579,7 +655,7 @@ export default function OnboardingPage() {
                         id="subAmount"
                         type="number"
                         value={subAmount}
-                        onChange={(e) => setSubAmount(e.target.value)}
+                        onChange={(event) => setSubAmount(event.target.value)}
                         placeholder="Ej. 12.99"
                       />
                     </div>
@@ -589,21 +665,29 @@ export default function OnboardingPage() {
                       <SubscriptionFrequencySelect
                         id="subFreq"
                         value={subFreq}
-                        onChange={(e) => setSubFreq(e.target.value as any)}
+                        onChange={(event) =>
+                          setSubFreq(
+                            event.target.value as
+                              | "daily"
+                              | "weekly"
+                              | "bi-weekly"
+                              | "monthly",
+                          )
+                        }
                       />
                     </div>
                   </div>
 
-                  <div className="grid grid-cols-2 gap-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="subCategory">Categoría</Label>
-                      <Input
-                        id="subCategory"
-                        value={subCategory}
-                        onChange={(e) => setSubCategory(e.target.value)}
-                        placeholder="Ej. entretenimiento, software, salud"
-                      />
-                    </div>
+                  <div className="grid grid-cols-1 gap-4">
+                    <CategoryLibraryInput
+                      id="subCategory"
+                      label="Categoría"
+                      value={subCategory}
+                      onChange={setSubCategory}
+                      categories={subscriptionCategoryLibrary}
+                      placeholder="Ej. software"
+                      helperText="Puedes elegir una categoría sugerida o escribir una nueva."
+                    />
 
                     <div className="space-y-2">
                       <Label htmlFor="subDate">Fecha del Próximo Cobro</Label>
@@ -611,7 +695,7 @@ export default function OnboardingPage() {
                         id="subDate"
                         type="date"
                         value={subDate}
-                        onChange={(e) => setSubDate(e.target.value)}
+                        onChange={(event) => setSubDate(event.target.value)}
                         required
                       />
                     </div>
@@ -620,14 +704,7 @@ export default function OnboardingPage() {
 
                 <div className="flex gap-3 pt-4">
                   <Button
-                    onClick={() => {
-                      setError("");
-                      if (subscriptionsList.length > 0) {
-                        setStep(6);
-                      } else {
-                        setStep(4);
-                      }
-                    }}
+                    onClick={() => setStep(5)}
                     variant="outline"
                     className="gap-2"
                   >
@@ -644,34 +721,40 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* STEP 6: Subscription Loop summary */}
-            {step === 6 && (
+            {step === 7 && (
               <div className="space-y-6">
                 <div className="space-y-1">
                   <h2 className="font-heading-style text-2xl font-bold tracking-tight lowercase">
-                    /suscripciones añadidas
+                    /suscripciones_añadidas
                   </h2>
                   <p className="text-xs text-muted-foreground font-mono">
                     Resumen de tus suscripciones de cobro recurrente.
                   </p>
                 </div>
 
-                {/* Subscriptions summary list */}
                 <div className="space-y-2 max-h-[220px] overflow-y-auto pr-1">
-                  {subscriptionsList.map((sub, index) => (
+                  {subscriptionsList.map((subscription, index) => (
                     <div
-                      key={index}
+                      key={`${subscription.name}-${index}`}
                       className="flex justify-between items-center p-3 rounded-xl border border-premium bg-accent-soft-bg/30 font-mono text-xs"
                     >
                       <div className="space-y-0.5">
-                        <p className="font-bold text-foreground">{sub.name}</p>
+                        <p className="font-bold text-foreground">
+                          {subscription.name}
+                        </p>
                         <p className="text-[10px] text-muted-foreground">
-                          Cobro: {translateFrequency(sub.billing_cycle)} ({sub.category})
+                          Cobro:{" "}
+                          {translateFrequency(subscription.billing_cycle)} (
+                          {subscription.category})
                         </p>
                       </div>
                       <div className="flex items-center space-x-3">
                         <span className="font-bold text-destructive">
-                          -{new Intl.NumberFormat("es-ES", { style: "currency", currency }).format(sub.amount)}
+                          -
+                          {new Intl.NumberFormat("es-ES", {
+                            style: "currency",
+                            currency,
+                          }).format(subscription.amount)}
                         </span>
                         <button
                           onClick={() => deleteSubscriptionFromList(index)}
@@ -686,17 +769,19 @@ export default function OnboardingPage() {
                 </div>
 
                 <div className="border-t border-dashed border-border pt-4 text-center space-y-4">
-                  <p className="text-sm font-medium">¿Tienes alguna otra suscripción de pago que agregar?</p>
+                  <p className="text-xs font-mono font-medium text-muted-foreground">
+                    ¿Tienes alguna otra suscripción que agregar?
+                  </p>
                   <div className="flex gap-3">
                     <Button
-                      onClick={() => setStep(5)}
+                      onClick={() => setStep(6)}
                       variant="outline"
                       className="flex-1 justify-center gap-2"
                     >
                       SÍ, AGREGAR OTRA <IconPlus className="size-4" />
                     </Button>
                     <Button
-                      onClick={() => setStep(7)}
+                      onClick={() => setStep(8)}
                       variant="soft"
                       className="flex-1 justify-center gap-2"
                     >
@@ -707,8 +792,7 @@ export default function OnboardingPage() {
               </div>
             )}
 
-            {/* STEP 7: Theme, Billing Tier & Final Welcome */}
-            {step === 7 && (
+            {step === 8 && (
               <div className="space-y-6">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
@@ -723,20 +807,19 @@ export default function OnboardingPage() {
                 </div>
 
                 <div className="space-y-4">
-                  {/* Theme Accent Picker */}
                   <div className="space-y-2">
                     <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground block">
                       Color de Acento de la Interfaz
                     </Label>
                     <div className="flex items-center space-x-3 pt-1">
-                      {themes.map((t) => {
-                        const isActive = accentTheme === t.id;
+                      {themes.map((theme) => {
+                        const isActive = accentTheme === theme.id;
                         return (
                           <button
-                            key={t.id}
+                            key={theme.id}
                             type="button"
-                            onClick={() => setAccentTheme(t.id)}
-                            className={`size-8 rounded-full ${t.class} border-2 ${
+                            onClick={() => setAccentTheme(theme.id)}
+                            className={`size-8 rounded-full ${theme.class} border-2 ${
                               isActive
                                 ? "border-foreground scale-110 ring-4 ring-accent-soft-fg/20"
                                 : "border-border hover:scale-105"
@@ -747,13 +830,11 @@ export default function OnboardingPage() {
                     </div>
                   </div>
 
-                  {/* Plan Picker */}
                   <div className="space-y-2">
                     <Label className="text-[10px] font-mono uppercase tracking-wider text-muted-foreground block">
                       Selecciona tu plan de Zetsu
                     </Label>
                     <div className="grid grid-cols-2 gap-3">
-                      {/* Free Plan */}
                       <button
                         type="button"
                         onClick={() => setSelectedPlan("free")}
@@ -763,11 +844,14 @@ export default function OnboardingPage() {
                             : "bg-background border-premium hover:border-foreground/30"
                         }`}
                       >
-                        <p className="font-mono text-[9px] font-bold text-muted-foreground uppercase">Gratis</p>
-                        <p className="font-mono font-bold text-sm mt-0.5">$0/mes</p>
+                        <p className="font-mono text-[9px] font-bold text-muted-foreground uppercase">
+                          Gratis
+                        </p>
+                        <p className="font-mono font-bold text-sm mt-0.5">
+                          $0/mes
+                        </p>
                       </button>
 
-                      {/* Pro Plan */}
                       <button
                         type="button"
                         onClick={() => setSelectedPlan("pro")}
@@ -780,38 +864,41 @@ export default function OnboardingPage() {
                         <span className="absolute top-2 right-2 bg-foreground text-background font-mono text-[8px] px-1 py-0.2 rounded-md font-bold">
                           PRO
                         </span>
-                        <p className="font-mono text-[9px] font-bold text-accent-soft-fg uppercase">Pro</p>
-                        <p className="font-mono font-bold text-sm mt-0.5">$9/mes</p>
+                        <p className="font-mono text-[9px] font-bold text-accent-soft-fg uppercase">
+                          Pro
+                        </p>
+                        <p className="font-mono font-bold text-sm mt-0.5">
+                          $9/mes
+                        </p>
                       </button>
                     </div>
 
-                    {selectedPlan === "free" && subscriptionsList.length > 0 && (
-                      <p className="text-[9px] font-mono text-amber-600 dark:text-amber-400 mt-1">
-                        [!] Has registrado suscripciones. Estarán bloqueadas en el plan Gratis hasta que actualices a Pro.
-                      </p>
-                    )}
+                    {selectedPlan === "free" &&
+                      subscriptionsList.length > 0 && (
+                        <p className="text-[9px] font-mono text-amber-600 dark:text-amber-400 mt-1">
+                          [!] Has registrado suscripciones. Estarán bloqueadas
+                          en el plan Gratis hasta que actualices a Pro.
+                        </p>
+                      )}
                   </div>
 
-                  {/* Welcome Message Card */}
                   <div className="p-4 border border-accent-soft-border bg-accent-soft-bg rounded-2xl text-center space-y-1 mt-4">
                     <p className="font-heading-style text-base font-bold text-foreground">
-                      ¡Bienvenido a Zetsu, {fullName.split(" ")[0].toLowerCase()}!
+                      ¡Bienvenido a Zetsu,{" "}
+                      {fullName.split(" ")[0]?.toLowerCase() || "usuario"}!
                     </p>
                     <p className="text-[10px] font-mono text-muted-foreground leading-relaxed">
-                      Tu entorno financiero está listo. Al hacer clic en finalizar se guardarán tus datos y se inicializará tu dashboard.
+                      Tu perfil financiero está listo. Al finalizar se crearán
+                      tus reglas iniciales y podrás entrar al dashboard.
                     </p>
                   </div>
                 </div>
 
                 <div className="flex gap-3 pt-2">
                   <Button
-                    onClick={() => {
-                      if (subscriptionsList.length > 0) {
-                        setStep(6);
-                      } else {
-                        setStep(4);
-                      }
-                    }}
+                    onClick={() =>
+                      setStep(subscriptionsList.length > 0 ? 7 : 5)
+                    }
                     variant="outline"
                     className="gap-2"
                     disabled={loading}
@@ -827,9 +914,13 @@ export default function OnboardingPage() {
                     {loading ? (
                       "procesando..."
                     ) : selectedPlan === "pro" ? (
-                      <>ir a pagar <IconArrowRight className="size-4" /></>
+                      <>
+                        ir a pagar <IconArrowRight className="size-4" />
+                      </>
                     ) : (
-                      <>finalizar <IconCircleCheck className="size-4" /></>
+                      <>
+                        finalizar <IconCircleCheck className="size-4" />
+                      </>
                     )}
                   </Button>
                 </div>
