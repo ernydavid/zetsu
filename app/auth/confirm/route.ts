@@ -15,6 +15,12 @@ function getSafeNextPath(next: string | null, fallback: string) {
   return next;
 }
 
+function getErrorRedirectUrl(request: NextRequest, nextPath: string) {
+  const isResetFlow = nextPath.startsWith("/auth/reset-password");
+  const pathname = isResetFlow ? "/auth/forgot-password" : "/auth/check-email";
+  return new URL(pathname, request.url);
+}
+
 export async function GET(request: NextRequest) {
   const requestUrl = new URL(request.url);
   const code = requestUrl.searchParams.get("code");
@@ -26,7 +32,7 @@ export async function GET(request: NextRequest) {
   );
 
   const successUrl = new URL(nextPath, request.url);
-  const errorUrl = new URL("/auth/forgot-password", request.url);
+  const errorUrl = getErrorRedirectUrl(request, nextPath);
   let response = NextResponse.redirect(successUrl);
 
   const supabase = createServerClient(supabaseUrl!, supabaseKey!, {
@@ -53,7 +59,9 @@ export async function GET(request: NextRequest) {
 
     errorUrl.searchParams.set(
       "error",
-      "No pudimos validar el enlace de recuperación. Solicita uno nuevo.",
+      nextPath.startsWith("/auth/reset-password")
+        ? "No pudimos validar el enlace de recuperación. Solicita uno nuevo."
+        : "No pudimos validar el enlace de confirmación. Intenta registrarte de nuevo.",
     );
     return NextResponse.redirect(errorUrl);
   }
@@ -71,7 +79,9 @@ export async function GET(request: NextRequest) {
 
   errorUrl.searchParams.set(
     "error",
-    "El enlace de recuperación es inválido o ya expiró.",
+    nextPath.startsWith("/auth/reset-password")
+      ? "El enlace de recuperación es inválido o ya expiró."
+      : "El enlace de confirmación es inválido o ya expiró.",
   );
   return NextResponse.redirect(errorUrl);
 }

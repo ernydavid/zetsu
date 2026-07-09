@@ -1,8 +1,9 @@
 "use server";
 
-import { cookies, headers } from "next/headers";
+import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
+import { getRequestSiteUrl } from "@/lib/site-url";
 
 type AuthActionState = {
   error?: string;
@@ -61,30 +62,6 @@ function getAuthErrorMessage(message: string, code?: string | null) {
   return message;
 }
 
-async function getRequestOrigin() {
-  const configuredUrl =
-    process.env.NEXT_PUBLIC_SITE_URL ||
-    process.env.SITE_URL ||
-    process.env.NEXT_PUBLIC_APP_URL;
-
-  if (configuredUrl) {
-    const normalized = configuredUrl.trim().replace(/\/+$/, "");
-    return normalized.startsWith("http") ? normalized : `https://${normalized}`;
-  }
-
-  const headerList = await headers();
-  const host = headerList.get("x-forwarded-host") ?? headerList.get("host");
-  const proto =
-    headerList.get("x-forwarded-proto") ??
-    (host?.includes("localhost") ? "http" : "https");
-
-  if (!host) {
-    return "http://localhost:3000";
-  }
-
-  return `${proto}://${host}`;
-}
-
 export async function login(
   _prevState: AuthActionState,
   formData: FormData,
@@ -130,11 +107,13 @@ export async function signup(
 
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
+  const siteUrl = await getRequestSiteUrl();
 
   const { error } = await supabase.auth.signUp({
     email,
     password,
     options: {
+      emailRedirectTo: `${siteUrl}/auth/confirm?next=/onboarding`,
       data: {
         full_name: fullName,
       },
@@ -145,7 +124,7 @@ export async function signup(
     return { error: getAuthErrorMessage(error.message, error.code) };
   }
 
-  redirect("/onboarding");
+  redirect(`/auth/check-email?email=${encodeURIComponent(email)}`);
 }
 
 export async function requestPasswordReset(
@@ -158,7 +137,7 @@ export async function requestPasswordReset(
     return { error: "Ingresa tu correo electrónico." };
   }
 
-  const origin = await getRequestOrigin();
+  const origin = await getRequestSiteUrl();
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 

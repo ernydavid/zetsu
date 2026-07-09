@@ -31,7 +31,7 @@ export default function SignupPage() {
             <AppLogo size="lg" variant="full" priority />
           </Link>
           <p className="text-sm font-mono text-muted-foreground uppercase tracking-wider">
-            Crea una cuenta para empezar tu onboarding
+            crea tu cuenta y confirma tu correo
           </p>
         </div>
 
