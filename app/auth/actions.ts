@@ -34,7 +34,10 @@ function validatePassword(password: string) {
   return null;
 }
 
-function getAuthErrorMessage(message: string, code?: string | null) {
+function getAuthErrorMessage(message: unknown, code?: string | null) {
+  const normalizedMessage =
+    typeof message === "string" ? message.trim() : "";
+
   if (code === "invalid_credentials") {
     return "Correo o contraseña incorrectos.";
   }
@@ -59,7 +62,11 @@ function getAuthErrorMessage(message: string, code?: string | null) {
     return "La nueva contraseña debe ser distinta a la anterior.";
   }
 
-  return message;
+  if (!normalizedMessage || normalizedMessage === "{}") {
+    return "Ocurrió un problema al procesar la solicitud. Revisa la configuración de Auth y SMTP en Supabase.";
+  }
+
+  return normalizedMessage;
 }
 
 export async function login(
@@ -141,9 +148,18 @@ export async function requestPasswordReset(
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
 
-  const { error } = await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: `${origin}/auth/confirm?next=/auth/reset-password`,
-  });
+  let error: { message?: unknown; code?: string | null } | null = null;
+
+  try {
+    const result = await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: `${origin}/auth/confirm?next=/auth/reset-password`,
+    });
+    error = result.error;
+  } catch (unexpectedError) {
+    return {
+      error: getAuthErrorMessage(unexpectedError),
+    };
+  }
 
   if (error && error.code !== "user_not_found") {
     return { error: getAuthErrorMessage(error.message, error.code) };
