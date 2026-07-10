@@ -16,19 +16,37 @@ function asNumber(value: number | string | null | undefined) {
 export function getDebtMonthlyCommitment(
   debt: Pick<DebtObligation, "installment_amount" | "payment_minimum">,
 ) {
+  const paymentMinimum = asNumber(debt.payment_minimum);
+  if (paymentMinimum > 0) {
+    return paymentMinimum;
+  }
+
   const installmentAmount = asNumber(debt.installment_amount);
-  return installmentAmount > 0 ? installmentAmount : asNumber(debt.payment_minimum);
+  return installmentAmount > 0 ? installmentAmount : 0;
 }
 
-export function getDebtRemainingInstallments(
-  debt: Pick<DebtObligation, "current_balance" | "installment_count" | "installment_amount">,
+export function getDebtEstimatedMonthsRemaining(
+  debt: Pick<
+    DebtObligation,
+    "current_balance" | "payment_target" | "payment_minimum" | "installment_count" | "installment_amount"
+  >,
 ) {
   const currentBalance = asNumber(debt.current_balance);
-  const installmentAmount = asNumber(debt.installment_amount);
+  const paymentTarget = asNumber(debt.payment_target);
+  const paymentMinimum = getDebtMonthlyCommitment(debt);
   const storedCount = asNumber(debt.installment_count);
+  const installmentAmount = asNumber(debt.installment_amount);
 
   if (currentBalance <= 0) {
     return 0;
+  }
+
+  if (paymentTarget > 0) {
+    return Math.max(1, Math.ceil(currentBalance / paymentTarget));
+  }
+
+  if (paymentMinimum > 0) {
+    return Math.max(1, Math.ceil(currentBalance / paymentMinimum));
   }
 
   if (installmentAmount > 0) {

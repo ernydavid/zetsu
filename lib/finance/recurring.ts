@@ -9,11 +9,16 @@ function clampDay(year: number, monthIndex: number, day: number) {
 }
 
 function toIsoDate(date: Date) {
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Invalid time value");
+  }
+
   return date.toISOString().split("T")[0];
 }
 
 function parseIsoDate(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
+  const normalized = value.trim().slice(0, 10);
+  const [year, month, day] = normalized.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1, day));
 }
 
@@ -212,6 +217,31 @@ export function getNextRecurringOccurrence(
   rule: Pick<FinanceRecurringRule, "cadence" | "anchor_date" | "next_occurrence" | "schedule_config">,
   reference = todayIso(),
 ) {
-  const [nextOccurrence] = collectRecurringOccurrencesInRange(rule, reference, "9999-12-31");
-  return nextOccurrence ?? null;
+  const alignedStart = rule.next_occurrence || rule.anchor_date;
+
+  if (rule.cadence === "bi-weekly" && getRecurringRuleScheduleDays(rule).length >= 2) {
+    const referenceDate = parseIsoDate(reference);
+    const limitDate = new Date(referenceDate);
+    limitDate.setUTCDate(limitDate.getUTCDate() + 62);
+
+    const [nextOccurrence] = buildCustomBiWeeklyOccurrences({
+      startDate: alignedStart > reference ? alignedStart : reference,
+      limitDate: toIsoDate(limitDate),
+      scheduleDays: getRecurringRuleScheduleDays(rule),
+    });
+
+    return nextOccurrence ?? null;
+  }
+
+  let occurrence = alignedStart;
+
+  while (occurrence < reference) {
+    const nextOccurrence = addCadence(occurrence, rule.cadence);
+    if (nextOccurrence === occurrence) {
+      break;
+    }
+    occurrence = nextOccurrence;
+  }
+
+  return occurrence ?? null;
 }

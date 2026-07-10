@@ -6,7 +6,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/utils/supabase/server";
 import {
   computeRecommendedExtraPayment,
-  getDebtRemainingInstallments,
+  getDebtEstimatedMonthsRemaining,
   nextDueDateFromDay,
 } from "@/lib/finance/debt-utils";
 import {
@@ -50,6 +50,28 @@ function validateRecurringIncomeSchedule(cadence: string, scheduleDays: number[]
 
 function buildPendingStatus(date: string) {
   return date > todayIso() ? "scheduled" : "pending";
+}
+
+function getActionErrorMessage(error: unknown, fallback: string) {
+  if (error instanceof Error && error.message.trim()) {
+    return error.message.trim();
+  }
+
+  if (typeof error === "string" && error.trim()) {
+    return error.trim();
+  }
+
+  return fallback;
+}
+
+function isNextRedirectError(error: unknown) {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "digest" in error &&
+    typeof (error as { digest?: unknown }).digest === "string" &&
+    (error as { digest: string }).digest.startsWith("NEXT_REDIRECT")
+  );
 }
 
 async function getFinanceContext() {
@@ -319,65 +341,96 @@ export async function deleteIncome(id: string): Promise<void> {
 }
 
 export async function addPayment(formData: FormData): Promise<void> {
-  const { supabase, user, profile, primaryAccount } = await getFinanceContext();
-  const title = String(formData.get("title") || "").trim();
-  const amount = normalizeAmount(formData.get("amount"));
-  const categoryName = String(formData.get("category") || "otros").trim().toLowerCase();
-  const isRecurring = formData.get("is_recurring") === "true" || formData.get("is_recurring") === "on";
+  try {
+    const { supabase, user, profile, primaryAccount } = await getFinanceContext();
+    const title = String(formData.get("title") || "").trim();
+    const amount = normalizeAmount(formData.get("amount"));
+    const categoryName = String(formData.get("category") || "otros").trim().toLowerCase();
+    const isRecurring = formData.get("is_recurring") === "true" || formData.get("is_recurring") === "on";
 
-  if (!title || Number.isNaN(amount) || amount <= 0) {
-    redirect("/dashboard?error=Datos+de+gasto+inválidos");
-  }
-
-  const category = await findCategoryByName(supabase, user.id, categoryName || "otros", "expense");
-
-  if (isRecurring) {
-    if (profile.billing_tier !== "pro") {
-      redirect("/dashboard?error=Se+requiere+el+plan+Pro+para+automatizar+gastos+recurrentes");
+    if (!title || Number.isNaN(amount) || amount <= 0) {
+      redirect("/dashboard?error=Datos+de+gasto+inválidos");
     }
 
-    const cadence = String(formData.get("billing_cycle") || "monthly") as
-      | "daily"
-      | "weekly"
-      | "bi-weekly"
-      | "monthly"
-      | "yearly";
-    const anchorDate = buildRecurringAnchorFromForm(
-      String(formData.get("day_of_month") || "1"),
-      cadence,
+    if (!primaryAccount?.id) {
+      redirect("/dashboard/subscriptions?error=No+encontramos+una+cuenta+principal+para+registrar+la+suscripción");
+    }
+
+    const category = await findCategoryByName(supabase, user.id, categoryName || "otros", "expense");
+
+    if (!category?.id) {
+      redirect("/dashboard/subscriptions?error=No+se+pudo+resolver+la+categoría+de+la+suscripción");
+    }
+
+    if (isRecurring) {
+      if (profile.billing_tier !== "pro") {
+        redirect("/dashboard?error=Se+requiere+el+plan+Pro+para+automatizar+gastos+recurrentes");
+      }
+
+      const cadence = String(formData.get("billing_cycle") || "monthly") as
+        | "daily"
+        | "weekly"
+        | "bi-weekly"
+        | "monthly"
+        | "yearly";
+      const anchorDate = buildRecurringAnchorFromForm(
+        String(formData.get("day_of_month") || "1"),
+        cadence,
+      );
+
+      await upsertRecurringRule({
+        supabase,
+        userId: user.id,
+        accountId: primaryAccount.id,
+        categoryId: category.id,
+        kind: "expense",
+        name: title,
+        amount,
+        cadence,
+        anchorDate,
+        scheduleConfig: buildRecurringScheduleConfigFromForm(cadence),
+      });
+    } else {
+      const transactionDate = String(formData.get("next_pay_date") || todayIso());
+      await createManualTransaction({
+        supabase,
+        userId: user.id,
+        accountId: primaryAccount.id,
+        title,
+        amount,
+        kind: "expense",
+        categoryId: category.id,
+        categoryName: category.name,
+        transactionDate,
+        sourceType: "manual_expense",
+      });
+    }
+
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/transactions");
+    revalidatePath("/dashboard/accounts");
+    revalidatePath("/dashboard/budget");
+    revalidatePath("/dashboard/subscriptions");
+    redirect("/dashboard/subscriptions?success=Suscripción+creada+con+éxito");
+  } catch (error) {
+    if (isNextRedirectError(error)) {
+      throw error;
+    }
+
+    console.error("addPayment failed", {
+      error,
+      title: String(formData.get("title") || "").trim(),
+      billingCycle: String(formData.get("billing_cycle") || "monthly"),
+      dayOfMonth: String(formData.get("day_of_month") || "1"),
+      isRecurring:
+        formData.get("is_recurring") === "true" || formData.get("is_recurring") === "on",
+    });
+    redirect(
+      `/dashboard/subscriptions?error=${encodeURIComponent(
+        getActionErrorMessage(error, "No+se+pudo+crear+la+suscripción"),
+      )}`,
     );
-
-    await upsertRecurringRule({
-      supabase,
-      userId: user.id,
-      accountId: primaryAccount.id,
-      categoryId: category.id,
-      kind: "expense",
-      name: title,
-      amount,
-      cadence,
-      anchorDate,
-    });
-  } else {
-    const transactionDate = String(formData.get("next_pay_date") || todayIso());
-    await createManualTransaction({
-      supabase,
-      userId: user.id,
-      accountId: primaryAccount.id,
-      title,
-      amount,
-      kind: "expense",
-      categoryId: category.id,
-      categoryName: category.name,
-      transactionDate,
-      sourceType: "manual_expense",
-    });
   }
-
-  revalidatePath("/dashboard");
-  revalidatePath("/dashboard/transactions");
-  revalidatePath("/dashboard/accounts");
-  revalidatePath("/dashboard/budget");
 }
 
 export async function togglePaymentStatus(id: string, currentStatus: string): Promise<void> {
@@ -445,67 +498,96 @@ export async function deleteSubscription(id: string): Promise<void> {
 }
 
 export async function editSubscription(formData: FormData): Promise<void> {
-  const { supabase, user, profile, primaryAccount } = await getFinanceContext();
-  const id = String(formData.get("id") || "").trim();
-  const title = String(formData.get("name") || "").trim();
-  const amount = normalizeAmount(formData.get("amount"));
-  const categoryName = String(formData.get("category") || "otros").trim().toLowerCase();
-  const isRecurring = formData.get("is_recurring") === "true" || formData.get("is_recurring") === "on";
+  try {
+    const { supabase, user, profile, primaryAccount } = await getFinanceContext();
+    const id = String(formData.get("id") || "").trim();
+    const title = String(formData.get("name") || "").trim();
+    const amount = normalizeAmount(formData.get("amount"));
+    const categoryName = String(formData.get("category") || "otros").trim().toLowerCase();
+    const isRecurring = formData.get("is_recurring") === "true" || formData.get("is_recurring") === "on";
 
-  if (!id || !title || Number.isNaN(amount) || amount <= 0) {
-    redirect("/dashboard?error=Datos+de+suscripción+inválidos");
-  }
-
-  const category = await findCategoryByName(supabase, user.id, categoryName || "otros", "expense");
-
-  if (isRecurring) {
-    if (profile.billing_tier !== "pro") {
-      redirect("/dashboard?error=Se+requiere+el+plan+Pro+para+editar+suscripciones");
+    if (!id || !title || Number.isNaN(amount) || amount <= 0) {
+      redirect("/dashboard?error=Datos+de+suscripción+inválidos");
     }
 
-    const cadence = String(formData.get("billing_cycle") || "monthly") as
-      | "daily"
-      | "weekly"
-      | "bi-weekly"
-      | "monthly"
-      | "yearly";
-    const anchorDate = buildRecurringAnchorFromForm(
-      String(formData.get("day_of_month") || "1"),
-      cadence,
+    if (!primaryAccount?.id) {
+      redirect("/dashboard/subscriptions?error=No+encontramos+una+cuenta+principal+para+registrar+la+suscripción");
+    }
+
+    const category = await findCategoryByName(supabase, user.id, categoryName || "otros", "expense");
+
+    if (!category?.id) {
+      redirect("/dashboard/subscriptions?error=No+se+pudo+resolver+la+categoría+de+la+suscripción");
+    }
+
+    if (isRecurring) {
+      if (profile.billing_tier !== "pro") {
+        redirect("/dashboard?error=Se+requiere+el+plan+Pro+para+editar+suscripciones");
+      }
+
+      const cadence = String(formData.get("billing_cycle") || "monthly") as
+        | "daily"
+        | "weekly"
+        | "bi-weekly"
+        | "monthly"
+        | "yearly";
+      const anchorDate = buildRecurringAnchorFromForm(
+        String(formData.get("day_of_month") || "1"),
+        cadence,
+      );
+
+      await upsertRecurringRule({
+        supabase,
+        userId: user.id,
+        ruleId: id,
+        accountId: primaryAccount.id,
+        categoryId: category.id,
+        kind: "expense",
+        name: title,
+        amount,
+        cadence,
+        anchorDate,
+        scheduleConfig: buildRecurringScheduleConfigFromForm(cadence),
+      });
+    } else {
+      await archiveRecurringRule(supabase, user.id, id);
+      await createManualTransaction({
+        supabase,
+        userId: user.id,
+        accountId: primaryAccount.id,
+        title,
+        amount,
+        kind: "expense",
+        categoryId: category.id,
+        categoryName: category.name,
+        transactionDate: String(formData.get("next_pay_date") || todayIso()),
+        sourceType: "manual_expense",
+      });
+    }
+
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/transactions");
+    revalidatePath("/dashboard/subscriptions");
+    revalidatePath("/dashboard/accounts");
+    redirect("/dashboard/subscriptions?success=Suscripción+actualizada+con+éxito");
+  } catch (error) {
+    if (isNextRedirectError(error)) {
+      throw error;
+    }
+
+    console.error("editSubscription failed", {
+      error,
+      id: String(formData.get("id") || "").trim(),
+      billingCycle: String(formData.get("billing_cycle") || "monthly"),
+      isRecurring:
+        formData.get("is_recurring") === "true" || formData.get("is_recurring") === "on",
+    });
+    redirect(
+      `/dashboard/subscriptions?error=${encodeURIComponent(
+        getActionErrorMessage(error, "No+se+pudo+actualizar+la+suscripción"),
+      )}`,
     );
-
-    await upsertRecurringRule({
-      supabase,
-      userId: user.id,
-      ruleId: id,
-      accountId: primaryAccount.id,
-      categoryId: category.id,
-      kind: "expense",
-      name: title,
-      amount,
-      cadence,
-      anchorDate,
-    });
-  } else {
-    await archiveRecurringRule(supabase, user.id, id);
-    await createManualTransaction({
-      supabase,
-      userId: user.id,
-      accountId: primaryAccount.id,
-      title,
-      amount,
-      kind: "expense",
-      categoryId: category.id,
-      categoryName: category.name,
-      transactionDate: String(formData.get("next_pay_date") || todayIso()),
-      sourceType: "manual_expense",
-    });
   }
-
-  revalidatePath("/dashboard");
-  revalidatePath("/dashboard/transactions");
-  revalidatePath("/dashboard/subscriptions");
-  revalidatePath("/dashboard/accounts");
 }
 
 export async function addAccount(formData: FormData): Promise<void> {
@@ -938,8 +1020,8 @@ export async function upsertDebtObligation(formData: FormData): Promise<void> {
   const debtType = String(formData.get("debt_type") || "other");
   const originalBalance = normalizeAmount(formData.get("original_balance"));
   const currentBalance = normalizeAmount(formData.get("current_balance"));
-  const installmentAmount = normalizeAmount(formData.get("installment_amount"));
-  const installmentCount = Number.parseInt(String(formData.get("installment_count") || ""), 10);
+  const paymentMinimum = normalizeAmount(formData.get("payment_minimum"));
+  const paymentTarget = normalizeAmount(formData.get("payment_target"));
   const dueDay = Number.parseInt(String(formData.get("due_day") || "1"), 10);
   const apr = String(formData.get("apr") || "").trim();
 
@@ -947,14 +1029,19 @@ export async function upsertDebtObligation(formData: FormData): Promise<void> {
     !name ||
     Number.isNaN(originalBalance) ||
     Number.isNaN(currentBalance) ||
-    Number.isNaN(installmentAmount) ||
-    Number.isNaN(installmentCount) ||
-    installmentCount <= 0
+    Number.isNaN(paymentMinimum) ||
+    paymentMinimum <= 0
   ) {
     redirect("/dashboard/debts?error=Datos+de+deuda+inválidos");
   }
 
-  const normalizedInstallmentAmount = Math.max(0, installmentAmount);
+  const normalizedPaymentMinimum = Math.max(0, paymentMinimum);
+  const normalizedPaymentTarget = Number.isNaN(paymentTarget) || paymentTarget <= 0
+    ? 0
+    : Math.max(paymentTarget, normalizedPaymentMinimum);
+  const estimatedInstallmentCount = normalizedPaymentTarget > 0
+    ? Math.max(1, Math.ceil(Math.max(0, currentBalance) / normalizedPaymentTarget))
+    : null;
 
   const payload = {
     user_id: user.id,
@@ -963,10 +1050,10 @@ export async function upsertDebtObligation(formData: FormData): Promise<void> {
     currency: profile.base_currency,
     original_balance: Math.max(0, originalBalance),
     current_balance: Math.max(0, currentBalance),
-    installment_count: Math.max(1, installmentCount),
-    installment_amount: normalizedInstallmentAmount,
-    payment_minimum: normalizedInstallmentAmount,
-    payment_target: 0,
+    installment_count: estimatedInstallmentCount,
+    installment_amount: normalizedPaymentMinimum,
+    payment_minimum: normalizedPaymentMinimum,
+    payment_target: normalizedPaymentTarget,
     due_day: Math.max(1, Math.min(31, dueDay || 1)),
     apr: apr ? Number.parseFloat(apr) : null,
     status: Math.max(0, currentBalance) === 0 ? "paid" : "active",
@@ -991,6 +1078,36 @@ export async function upsertDebtObligation(formData: FormData): Promise<void> {
   revalidatePath("/dashboard");
   revalidatePath("/dashboard/debts");
   revalidatePath("/dashboard/budget");
+}
+
+export async function deleteDebtObligation(debtId: string): Promise<void> {
+  const { supabase, user } = await getFinanceContext();
+  const normalizedDebtId = debtId.trim();
+
+  if (!normalizedDebtId) {
+    throw new Error("Deuda inválida");
+  }
+
+  await supabase
+    .from("debt_allocations")
+    .delete()
+    .eq("debt_obligation_id", normalizedDebtId)
+    .eq("user_id", user.id);
+
+  const { error } = await supabase
+    .from("debt_obligations")
+    .delete()
+    .eq("id", normalizedDebtId)
+    .eq("user_id", user.id);
+
+  if (error) {
+    throw new Error(error.message || "No se pudo eliminar la deuda");
+  }
+
+  revalidatePath("/dashboard");
+  revalidatePath("/dashboard/debts");
+  revalidatePath("/dashboard/budget");
+  revalidatePath("/dashboard/transactions");
 }
 
 export async function recordDebtPayment(formData: FormData): Promise<void> {
@@ -1060,8 +1177,10 @@ export async function recordDebtPayment(formData: FormData): Promise<void> {
     .from("debt_obligations")
     .update({
       current_balance: nextBalance,
-      installment_count: getDebtRemainingInstallments({
+      installment_count: getDebtEstimatedMonthsRemaining({
         current_balance: nextBalance,
+        payment_target: debt.payment_target,
+        payment_minimum: debt.payment_minimum,
         installment_count: debt.installment_count,
         installment_amount: debt.installment_amount,
       }),
@@ -1144,8 +1263,10 @@ export async function linkTransactionToDebt(formData: FormData): Promise<void> {
     .from("debt_obligations")
     .update({
       current_balance: nextBalance,
-      installment_count: getDebtRemainingInstallments({
+      installment_count: getDebtEstimatedMonthsRemaining({
         current_balance: nextBalance,
+        payment_target: debt.payment_target,
+        payment_minimum: debt.payment_minimum,
         installment_count: debt.installment_count,
         installment_amount: debt.installment_amount,
       }),

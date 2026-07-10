@@ -1587,36 +1587,16 @@ export function DashboardClient({
                   />
                 </div>
 
-                {editingSubscription || isExpenseRecurring ? (
-                  <CategoryLibraryInput
-                    id="dashboard-subscription-category"
-                    name="category"
-                    label="Categoría"
-                    value={subscriptionCategoryValue}
-                    onChange={setSubscriptionCategoryValue}
-                    categories={expenseCategoryLibrary}
-                    placeholder="servicios"
-                    helperText="Elige una categoría sugerida o escribe una nueva para guardarla."
-                  />
-                ) : (
-                  <div className="space-y-1">
-                    <Label
-                      htmlFor="dashboard-payment-category"
-                      className="text-[10px] font-bold uppercase"
-                    >
-                      Categoría
-                    </Label>
-                    <Input
-                      id="dashboard-payment-category"
-                      name="category"
-                      placeholder="servicios"
-                      value={subscriptionCategoryValue}
-                      onChange={(event) =>
-                        setSubscriptionCategoryValue(event.target.value)
-                      }
-                    />
-                  </div>
-                )}
+                <CategoryLibraryInput
+                  id="dashboard-payment-category"
+                  name="category"
+                  label="Categoría"
+                  value={subscriptionCategoryValue}
+                  onChange={setSubscriptionCategoryValue}
+                  categories={expenseCategoryLibrary}
+                  placeholder="servicios"
+                  helperText="Elige una categoría sugerida o escribe una nueva para guardarla."
+                />
 
                 <div className="flex items-center justify-between p-3 bg-muted/20 border border-border rounded-xl">
                   <div className="space-y-0.5">

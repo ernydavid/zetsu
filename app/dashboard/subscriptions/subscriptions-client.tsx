@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { FormSelect } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { AppLogo } from "@/components/common/app-logo";
 import { AnimatedModal } from "@/components/common/animated-modal";
@@ -13,7 +14,7 @@ import { CategoryLibraryInput } from "@/components/common/category-library-input
 import { ThemeToggle } from "@/components/common/theme-toggle";
 import { Sidebar } from "@/components/common/sidebar";
 import { useAccentTheme, AccentTheme } from "@/components/common/theme-context";
-import { todayLocalIso } from "@/lib/finance/dates";
+import { parseIsoDate, todayLocalIso } from "@/lib/finance/dates";
 import { signout } from "@/app/auth/actions";
 import { sileo } from "sileo";
 import { SubscriptionFrequencySelect } from "@/components/common/frequency-select";
@@ -47,6 +48,24 @@ interface SubscriptionsClientProps {
   expenseCategoryLibrary: string[];
   isPro: boolean;
   currency: string;
+  errorMsg: string | null;
+  successMsg: string | null;
+}
+
+function parseDateOnly(value: Date | string) {
+  if (value instanceof Date) {
+    return value;
+  }
+
+  if (typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return parseIsoDate(value);
+  }
+
+  return new Date(value);
+}
+
+function isValidDate(date: Date) {
+  return !Number.isNaN(date.getTime());
 }
 
 export function SubscriptionsClient({
@@ -55,6 +74,8 @@ export function SubscriptionsClient({
   expenseCategoryLibrary,
   isPro,
   currency,
+  errorMsg,
+  successMsg,
 }: SubscriptionsClientProps) {
   const { accentTheme, setAccentTheme } = useAccentTheme();
   const [isMobileMenuOpen, setIsMobileMenuOpen] = React.useState(false);
@@ -79,20 +100,67 @@ export function SubscriptionsClient({
   const [subscriptionCategoryValue, setSubscriptionCategoryValue] = React.useState("servicios");
 
   React.useEffect(() => {
+    if (!errorMsg) {
+      return;
+    }
+
+    const decoded = decodeURIComponent(errorMsg);
+    sileo.error({ title: decoded });
+    const timer = setTimeout(() => {
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [errorMsg]);
+
+  React.useEffect(() => {
+    if (!successMsg) {
+      return;
+    }
+
+    const decoded = decodeURIComponent(successMsg);
+    sileo.success({ title: decoded });
+    const timer = setTimeout(() => {
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+    }, 5000);
+
+    return () => clearTimeout(timer);
+  }, [successMsg]);
+
+  const dayOptions = React.useMemo(() => {
+    const maxDay = expenseFrequency === "bi-weekly" ? 15 : 31;
+    return Array.from({ length: maxDay }, (_, index) => {
+      const day = String(index + 1);
+      return {
+        value: day,
+        label: `día ${day}`,
+      };
+    });
+  }, [expenseFrequency]);
+
+  React.useEffect(() => {
     if (editingSubscription) {
       setExpenseFrequency(editingSubscription.billing_cycle || "monthly");
       setSubscriptionCategoryValue(editingSubscription.category || "servicios");
       if (editingSubscription.next_payment_date) {
-        const d = new Date(editingSubscription.next_payment_date);
+        const d = parseDateOnly(editingSubscription.next_payment_date);
+        if (!isValidDate(d)) {
+          setExpenseDay("1");
+          return;
+        }
         const day = d.getUTCDate();
         const baseDay = editingSubscription.billing_cycle === "bi-weekly" ? (day > 15 ? day - 15 : day) : day;
         setExpenseDay(String(baseDay));
       } else {
-        setExpenseDay(String(new Date().getUTCDate()));
+        setExpenseDay(String(new Date().getDate()));
       }
     } else {
       setExpenseFrequency("monthly");
-      setExpenseDay(String(new Date().getUTCDate()));
+      setExpenseDay(String(new Date().getDate()));
       setSubscriptionCategoryValue("servicios");
     }
   }, [editingSubscription]);
@@ -123,19 +191,27 @@ export function SubscriptionsClient({
   };
 
   const formatDate = (dateInput: Date | string) => {
-    const d = new Date(dateInput);
+    const d = parseDateOnly(dateInput);
+    if (!isValidDate(d)) {
+      return "fecha inválida";
+    }
+
     return d.toLocaleDateString("es-ES", {
       year: "numeric",
       month: "short",
       day: "numeric",
+      timeZone: "UTC",
     });
   };
 
-  const getDaysLeftText = (dueDate: Date) => {
-    const today = new Date();
-    today.setHours(0, 0, 0, 0);
-    const due = new Date(dueDate);
-    due.setHours(0, 0, 0, 0);
+  const getDaysLeftText = (dueDateInput: Date | string) => {
+    const todayIso = todayLocalIso();
+    const today = parseIsoDate(todayIso);
+    const due = parseDateOnly(dueDateInput);
+
+    if (!isValidDate(due)) {
+      return "fecha inválida";
+    }
     
     const diffTime = due.getTime() - today.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
@@ -415,7 +491,7 @@ export function SubscriptionsClient({
                     </div>
                   ) : (
                     filteredSubscriptions.map((sub) => {
-                      const daysLeftText = getDaysLeftText(new Date(sub.next_payment_date));
+                      const daysLeftText = getDaysLeftText(sub.next_payment_date);
                       const isVencido = daysLeftText.startsWith("venció");
                       const isHoy = daysLeftText === "vence hoy";
 
@@ -591,26 +667,21 @@ export function SubscriptionsClient({
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="modal-sub-day" className="text-[10px] font-bold uppercase">Día del Mes</Label>
-                    <Input
+                    <FormSelect
                       id="modal-sub-day"
                       name="day_of_month"
-                      type="number"
-                      min="1"
-                      max={expenseFrequency === "bi-weekly" ? "15" : "31"}
-                      placeholder="5"
                       value={expenseDay}
-                      onChange={(e) => {
-                        const val = e.target.value;
-                        const parsed = parseInt(val);
-                        const maxVal = expenseFrequency === "bi-weekly" ? 15 : 31;
-                        if (val === "") {
-                          setExpenseDay("");
-                        } else if (!isNaN(parsed)) {
-                          setExpenseDay(String(Math.max(1, Math.min(maxVal, parsed))));
-                        }
-                      }}
+                      onValueChange={setExpenseDay}
+                      options={dayOptions}
+                      placeholder="elige un día"
+                      className="h-10"
                       required
                     />
+                    <p className="text-[9px] text-muted-foreground font-mono leading-relaxed">
+                      {expenseFrequency === "bi-weekly"
+                        ? "Para quincenal puedes elegir del 1 al 15. El segundo cobro se genera 15 días después."
+                        : "Selecciona el día exacto del mes en que quieres registrar el cobro."}
+                    </p>
                   </div>
                   {expenseFrequency === "bi-weekly" && (
                     <p className="col-span-2 text-[10px] text-accent-soft-fg font-mono mt-1 leading-relaxed">

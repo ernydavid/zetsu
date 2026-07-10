@@ -255,6 +255,9 @@ function FormSelect({
     () => options.map((option) => ({ label: option.label, value: option.value })),
     [options],
   )
+  const hasSelection =
+    (typeof value === "string" && value.length > 0) ||
+    (typeof defaultValue === "string" && defaultValue.length > 0)
 
   return (
     <Select
@@ -273,7 +276,9 @@ function FormSelect({
     >
       <SelectTrigger className={className}>
         <SelectValue>
-          {placeholder ? <span className="text-muted-foreground">{placeholder}</span> : null}
+          {!hasSelection && placeholder ? (
+            <span className="text-muted-foreground">{placeholder}</span>
+          ) : null}
         </SelectValue>
       </SelectTrigger>
       <SelectContent align="start">

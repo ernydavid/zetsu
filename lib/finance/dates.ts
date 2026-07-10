@@ -19,11 +19,16 @@ export function todayLocalIso(value = new Date()) {
 }
 
 export function toIsoDate(date: Date) {
+  if (Number.isNaN(date.getTime())) {
+    throw new Error("Invalid time value");
+  }
+
   return date.toISOString().split("T")[0];
 }
 
 export function parseIsoDate(value: string) {
-  const [year, month, day] = value.split("-").map(Number);
+  const normalized = value.trim().slice(0, 10);
+  const [year, month, day] = normalized.split("-").map(Number);
   return new Date(Date.UTC(year, month - 1, day));
 }
 

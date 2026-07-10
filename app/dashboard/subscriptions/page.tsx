@@ -6,9 +6,20 @@ import { SubscriptionsClient } from "./subscriptions-client";
 import { buildCategoryLibrary } from "@/lib/finance/recurring";
 import { getFinanceSnapshot } from "@/lib/finance/service";
 
-export default async function SubscriptionsPage() {
+type SubscriptionsPageProps = {
+  searchParams: Promise<{ [key: string]: string | string[] | undefined }>;
+};
+
+function pickSingleValue(value: string | string[] | undefined) {
+  return Array.isArray(value) ? value[0] : value;
+}
+
+export default async function SubscriptionsPage({
+  searchParams,
+}: SubscriptionsPageProps) {
   const cookieStore = await cookies();
   const supabase = createClient(cookieStore);
+  const resolvedSearchParams = await searchParams;
 
   const {
     data: { user },
@@ -49,6 +60,8 @@ export default async function SubscriptionsPage() {
       expenseCategoryLibrary={expenseCategoryLibrary}
       isPro={snapshot.profile.billing_tier === "pro"}
       currency={snapshot.profile.base_currency}
+      errorMsg={pickSingleValue(resolvedSearchParams.error) ?? null}
+      successMsg={pickSingleValue(resolvedSearchParams.success) ?? null}
     />
   );
 }
