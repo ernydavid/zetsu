@@ -10,6 +10,9 @@ type AuthActionState = {
   success?: string;
 } | null;
 
+const VERIFICATION_RESEND_COOLDOWN_SECONDS = 180;
+const VERIFICATION_RESEND_COOKIE_PREFIX = "zetsu-verification-resend:";
+
 function normalizeEmail(value: FormDataEntryValue | null) {
   return typeof value === "string" ? value.trim().toLowerCase() : "";
 }
@@ -69,6 +72,86 @@ function getAuthErrorMessage(message: unknown, code?: string | null) {
   return normalizedMessage;
 }
 
+function getVerificationResendCookieName(email: string) {
+  return `${VERIFICATION_RESEND_COOKIE_PREFIX}${Buffer.from(email).toString("base64url")}`;
+}
+
+function getVerificationCooldownMessage(remainingSeconds: number) {
+  return `Ya enviamos un correo de verificación recientemente. Espera ${remainingSeconds} segundos antes de solicitar otro.`;
+}
+
+function getVerificationSentMessage() {
+  return "Tu correo aún no ha sido confirmado. Te enviamos un nuevo enlace de verificación.";
+}
+
+function buildCheckEmailUrl(options: {
+  email: string;
+  error?: string;
+  message?: string;
+  cooldownSeconds?: number;
+}) {
+  const params = new URLSearchParams({
+    email: options.email,
+  });
+
+  if (options.error) {
+    params.set("error", options.error);
+  }
+
+  if (options.message) {
+    params.set("message", options.message);
+  }
+
+  if (typeof options.cooldownSeconds === "number" && options.cooldownSeconds > 0) {
+    params.set("cooldown", String(options.cooldownSeconds));
+  }
+
+  return `/auth/check-email?${params.toString()}`;
+}
+
+function getRemainingVerificationCooldownSeconds(
+  cookieStore: Awaited<ReturnType<typeof cookies>>,
+  email: string,
+) {
+  const rawValue = cookieStore.get(getVerificationResendCookieName(email))?.value;
+  const sentAt = rawValue ? Number(rawValue) : Number.NaN;
+
+  if (!Number.isFinite(sentAt)) {
+    return 0;
+  }
+
+  const elapsedSeconds = Math.floor((Date.now() - sentAt) / 1000);
+  return Math.max(0, VERIFICATION_RESEND_COOLDOWN_SECONDS - elapsedSeconds);
+}
+
+function markVerificationResend(
+  cookieStore: Awaited<ReturnType<typeof cookies>>,
+  email: string,
+) {
+  cookieStore.set(getVerificationResendCookieName(email), String(Date.now()), {
+    httpOnly: true,
+    maxAge: VERIFICATION_RESEND_COOLDOWN_SECONDS,
+    path: "/",
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
+}
+
+async function resendSignupVerificationEmail(
+  supabase: ReturnType<typeof createClient>,
+  email: string,
+) {
+  const siteUrl = await getRequestSiteUrl();
+
+  return supabase.auth.resend({
+    type: "signup",
+    email,
+    options: {
+      emailRedirectTo: `${siteUrl}/auth/confirm?next=/onboarding`,
+    },
+  });
+}
+
 export async function login(
   _prevState: AuthActionState,
   formData: FormData,
@@ -89,6 +172,44 @@ export async function login(
   });
 
   if (error) {
+    if (error.code === "email_not_confirmed") {
+      const remainingSeconds = getRemainingVerificationCooldownSeconds(
+        cookieStore,
+        email,
+      );
+
+      if (remainingSeconds > 0) {
+        redirect(
+          buildCheckEmailUrl({
+            email,
+            message: getVerificationCooldownMessage(remainingSeconds),
+            cooldownSeconds: remainingSeconds,
+          }),
+        );
+      }
+
+      const resendResult = await resendSignupVerificationEmail(supabase, email);
+
+      if (resendResult.error) {
+        redirect(
+          buildCheckEmailUrl({
+            email,
+            error: `Tu correo aún no ha sido confirmado y no pudimos reenviar el enlace: ${getAuthErrorMessage(resendResult.error.message, resendResult.error.code)}`,
+          }),
+        );
+      }
+
+      markVerificationResend(cookieStore, email);
+
+      redirect(
+        buildCheckEmailUrl({
+          email,
+          message: getVerificationSentMessage(),
+          cooldownSeconds: VERIFICATION_RESEND_COOLDOWN_SECONDS,
+        }),
+      );
+    }
+
     return { error: getAuthErrorMessage(error.message, error.code) };
   }
 
@@ -168,6 +289,43 @@ export async function requestPasswordReset(
   return {
     success:
       "Si existe una cuenta con ese correo, te enviaremos un enlace para restablecer tu contraseña.",
+  };
+}
+
+export async function resendVerificationEmail(email: string) {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail) {
+    return { error: "No encontramos un correo válido para reenviar la verificación." };
+  }
+
+  const cookieStore = await cookies();
+  const remainingSeconds = getRemainingVerificationCooldownSeconds(
+    cookieStore,
+    normalizedEmail,
+  );
+
+  if (remainingSeconds > 0) {
+    return {
+      error: getVerificationCooldownMessage(remainingSeconds),
+      retryAfterSeconds: remainingSeconds,
+    };
+  }
+
+  const supabase = createClient(cookieStore);
+  const { error } = await resendSignupVerificationEmail(supabase, normalizedEmail);
+
+  if (error) {
+    return {
+      error: getAuthErrorMessage(error.message, error.code),
+    };
+  }
+
+  markVerificationResend(cookieStore, normalizedEmail);
+
+  return {
+    success: getVerificationSentMessage(),
+    retryAfterSeconds: VERIFICATION_RESEND_COOLDOWN_SECONDS,
   };
 }
 
